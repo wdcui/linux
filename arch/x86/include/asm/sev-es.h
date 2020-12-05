@@ -176,6 +176,17 @@ union sev_rmp_adjust
 			: "r" (addr), "r" (largepage), "r" (validate) \
 			: "cc", "rax", "rcx", "rdx")
 
+static inline void hv_sev_debugbreak(u32 val)
+{
+	u32 low, high;
+	val = ((val & (u32)0xf) << 12) | (u32)0xf03;
+	asm volatile ("rdmsr" : "=a" (low), "=d" (high) : "c" (0xc0010130));
+	asm volatile ("wrmsr\n\r"
+		      "rep; vmmcall\n\r"
+		      :: "c" (0xc0010130), "a" (val), "d" (0x0));
+	asm volatile ("wrmsr" :: "c" (0xc0010130), "a" (low), "d" (high));
+}
+
 struct ghcb *sev_es_current_ghcb(void);
 void sev_es_terminate(unsigned int reason);
 void sev_snp_setup_ghcb(struct ghcb *ghcb);
