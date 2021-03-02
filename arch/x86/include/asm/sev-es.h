@@ -30,6 +30,32 @@
 #define GHCB_DEFAULT_USAGE	0x0000UL
 
 #define GHCB_SEV_CPUID_RESP	0x005UL
+
+#define GHCB_GPA_REGISTER_REQ	0x012UL
+#define 	GHCB_GPA_REGISTER_REQ_VAL(v)		((v) & ~0xfff)
+#define		GHCB_GPA_REGISTER_REQ_MSR(gfn) (GHCB_GPA_REGISTER_REQ | ((u64)(gfn)) << 12)
+
+#define GHCB_GPA_REGISTER_RESP	0x013UL
+#define 	GHCB_GPA_REGISTER_RESP_VAL(reg, val)	((reg) | (v))
+#define		GHCB_SNP_GPA_REGISTER_RESP_GFN(v)	((v) >> 12)
+
+#define GHCB_SNP_PAGE_STATE_CHANGE_REQ	0x0014
+#define		GHCB_SNP_PAGE_STATE_CHANGE_REQ_MSR(gfn, op) \
+			(GHCB_SNP_PAGE_STATE_CHANGE_REQ | \
+			(((u64)(gfn)) << 12) | \
+			(((u64)(op)) << 52))
+
+#define		GHCB_SNP_PAGE_STATE_REQ_GFN(v)	(((v) >> 12) & 0xffffffffff)
+#define		GHCB_SNP_PAGE_STATE_REQ_OP(v)	((((unsigned long)(v)) >> 52) & 0xf)
+#define		SNP_PAGE_STATE_PRIVATE		1
+#define		SNP_PAGE_STATE_SHARED		2
+#define		SNP_PAGE_STATE_PSMASH		3
+#define		SNP_PAGE_STATE_UNSMASH		4
+
+#define GHCB_SNP_PAGE_STATE_CHANGE_RESP	0x0015
+#define		GHCB_SNP_PAGE_STATE_RESP_VAL(reg, val)	\
+			(((reg) & 0xFFF) | ((val) << 32))
+
 #define GHCB_SEV_TERMINATE	0x100UL
 #define		GHCB_SEV_TERMINATE_REASON(reason_set, reason_val)	\
 			(((((u64)reason_set) &  0x7) << 12) |		\
@@ -110,5 +136,44 @@ static inline int sev_es_setup_ap_jump_table(struct real_mode_header *rmh) { ret
 static inline void sev_es_nmi_complete(void) { }
 static inline int sev_es_efi_map_ghcbs(pgd_t *pgd) { return 0; }
 #endif
+
+#define SEV_GHCB_FORMAT_BASE        0
+#define SEV_GHCB_FORMAT_HYPERCALL   1
+#define SEV_GHCB_FORMAT_VTL_RETURN  2
+
+union sev_rmp_adjust
+{
+    u64 as_uint64;
+    struct
+    {
+        u64 target_vmpl : 8;
+        u64 enable_read : 1;
+        u64 enable_write : 1;
+        u64 enable_user_execute : 1;
+        u64 enable_kernel_execute : 1;
+        u64 reserved1 : 4;
+        u64 vmsa : 1;
+    };
+};
+
+#define RMPADJUST(addr, size, flags, ret) \
+	asm volatile ("movq %1, %%rax\n\t" \
+		      "mov %2, %%ecx\n\t" \
+		      "movq %3, %%rdx\n\t" \
+		      ".byte 0xf3, 0x0f, 0x01, 0xfe\n\t" \
+		      "movq %%rax, %0" \
+			: "=r" (ret) \
+			: "r" (addr), "r" (size), "r" (flags) \
+			: "rax", "rcx", "rdx")
+
+#define PVALIDATE(addr, largepage, validate, ret) \
+	asm volatile ("movq %1, %%rax\n\t" \
+		      "mov %2, %%ecx\n\t" \
+		      "mov %3, %%edx\n\t" \
+		      ".byte 0xf2, 0x0f, 0x01, 0xff\n\t" \
+		      "mov %%eax, %0" \
+			: "=r" (ret) \
+			: "r" (addr), "r" (largepage), "r" (validate) \
+			: "cc", "rax", "rcx", "rdx")
 
 #endif

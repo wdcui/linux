@@ -54,6 +54,11 @@ void __init sev_es_init_vc_handling(void);
 bool sme_active(void);
 bool sev_active(void);
 bool sev_es_active(void);
+bool sev_snp_active(void);
+bool sev_vtom_enabled(void);
+bool sev_reflectvc_enabled(void);
+bool sev_restricted_injection_enabled(void);
+bool sev_alternate_injection_enabled(void);
 
 #define __bss_decrypted __section(".bss..decrypted")
 
@@ -79,6 +84,11 @@ static inline void sev_es_init_vc_handling(void) { }
 static inline bool sme_active(void) { return false; }
 static inline bool sev_active(void) { return false; }
 static inline bool sev_es_active(void) { return false; }
+static inline bool sev_snp_active(void) { return false; }
+static inline bool sev_vtom_enabled(void) { return false; }
+static inline bool sev_reflectvc_enabled(void) { return false; }
+static inline bool sev_restricted_injection_enabled(void) { return false; }
+static inline bool sev_alternate_injection_enabled(void) { return false; }
 
 static inline int __init
 early_set_memory_decrypted(unsigned long vaddr, unsigned long size) { return 0; }
