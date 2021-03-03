@@ -26,6 +26,22 @@
 struct ghcb boot_ghcb_page __aligned(PAGE_SIZE);
 struct ghcb *boot_ghcb;
 
+bool sev_snp_active(void)
+{
+	unsigned long low, high;
+	u64 val;
+
+	asm volatile("rdmsr\n" : "=a" (low), "=d" (high) :
+			"c" (MSR_AMD64_SEV));
+
+	val = (high << 32) | low;
+
+	if (val & MSR_AMD64_SEV_SNP_ACTIVE)
+		return true;
+
+	return false;
+}
+
 /*
  * Copy a version of this function here - insn-eval.c can't be used in
  * pre-decompression code.
