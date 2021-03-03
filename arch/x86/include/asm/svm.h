@@ -433,6 +433,11 @@ struct vmcb {
 		ghcb->save.field = value;					\
 	}
 
+static __always_inline void vc_ghcb_invalidate(struct ghcb *ghcb)
+{
+	memset(ghcb->save.valid_bitmap, 0, sizeof(ghcb->save.valid_bitmap));
+}
+
 DEFINE_GHCB_ACCESSORS(cpl)
 DEFINE_GHCB_ACCESSORS(rip)
 DEFINE_GHCB_ACCESSORS(rsp)

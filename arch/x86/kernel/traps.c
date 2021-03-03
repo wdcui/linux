@@ -1159,6 +1159,9 @@ void __init trap_init(void)
 	/* Init GHCB memory pages when running as an SEV-ES guest */
 	sev_es_init_vc_handling();
 
+	/* Init #HV doorbell pages when running as an SEV-SNP guest */
+	sev_snp_init_hv_handling();
+
 	idt_setup_traps();
 
 	/*
