@@ -135,7 +135,7 @@ static bool __head check_la57_support(unsigned long physaddr)
 unsigned long __head __startup_64(unsigned long physaddr,
 				  struct boot_params *bp)
 {
-	unsigned long vaddr, vaddr_end;
+	unsigned long va, vaddr, vaddr_end;
 	unsigned long load_delta, *p;
 	unsigned long pgtable_flags;
 	pgdval_t *pgd;
@@ -294,6 +294,9 @@ unsigned long __head __startup_64(unsigned long physaddr,
 				pmd[i] = sev_vtom_get_alias(pmd[i], false);
 			else
 				pmd[i] -= sme_get_me_mask();
+			if (sev_snp_active())
+				for (va = vaddr; va < vaddr + PMD_SIZE; va += PAGE_SIZE)
+					sev_snp_change_page_state(__pa(va), false);
 		}
 	}
 
