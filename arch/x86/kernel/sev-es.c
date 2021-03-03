@@ -611,8 +611,10 @@ bool __init sev_es_setup_ghcb(void)
 	if (sev_snp_active()) {
 		if (boot_ghcb == NULL)
 			sev_snp_setup_ghcb(&boot_ghcb_page);
-		else
+		else {
 			sev_snp_setup_ghcb(&this_cpu_read(runtime_data)->ghcb_page);
+			sev_snp_setup_hv_doorbell_page();
+		}
 	}
 
 	/*

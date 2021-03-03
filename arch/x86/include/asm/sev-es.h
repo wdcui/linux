@@ -180,5 +180,11 @@ struct ghcb *sev_es_current_ghcb(void);
 void sev_es_terminate(unsigned int reason);
 void sev_snp_setup_ghcb(struct ghcb *ghcb);
 void sev_snp_change_page_state(u64 gpa, bool enc);
+void sev_snp_setup_hv_doorbell_page(void);
+
+enum es_result sev_es_ghcb_hv_call(struct ghcb *ghcb,
+				   struct es_em_ctxt *ctxt,
+				   u64 exit_code, u64 exit_info_1,
+				   u64 exit_info_2);
 
 #endif
