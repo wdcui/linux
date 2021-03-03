@@ -24,7 +24,7 @@ static bool __init sev_es_check_cpu_features(void)
 	return true;
 }
 
-static void sev_es_terminate(unsigned int reason)
+void sev_es_terminate(unsigned int reason)
 {
 	u64 val = GHCB_SEV_TERMINATE;
 
@@ -45,11 +45,13 @@ static void sev_es_terminate(unsigned int reason)
 static bool sev_es_negotiate_protocol(void)
 {
 	u64 val;
+	u64 backup = sev_es_rd_ghcb_msr();
 
 	/* Do the GHCB protocol version negotiation */
 	sev_es_wr_ghcb_msr(GHCB_SEV_INFO_REQ);
 	VMGEXIT();
 	val = sev_es_rd_ghcb_msr();
+	sev_es_wr_ghcb_msr(backup);
 
 	if (GHCB_INFO(val) != GHCB_SEV_INFO)
 		return false;
@@ -108,7 +110,17 @@ static enum es_result sev_es_ghcb_hv_call(struct ghcb *ghcb,
 	ghcb_set_sw_exit_info_1(ghcb, exit_info_1);
 	ghcb_set_sw_exit_info_2(ghcb, exit_info_2);
 
-	sev_es_wr_ghcb_msr(__pa(ghcb));
+#ifndef __BOOT_COMPRESSED
+	if (ghcb != sev_es_current_ghcb()) {
+		if (sev_snp_active()) {
+			sev_snp_setup_ghcb(ghcb);
+		} else {
+			BUG_ON(sev_vtom_enabled());
+			sev_es_wr_ghcb_msr(__pa(ghcb));
+		}
+	}
+#endif
+
 	VMGEXIT();
 
 	if ((ghcb->save.sw_exit_info_1 & 0xffffffff) == 1) {

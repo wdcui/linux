@@ -235,6 +235,21 @@ static __always_inline void sev_es_wr_ghcb_msr(u64 val)
 	native_wrmsr(MSR_AMD64_SEV_ES_GHCB, low, high);
 }
 
+struct ghcb *sev_es_current_ghcb(void)
+{
+	unsigned long gpa = sev_es_rd_ghcb_msr();
+
+	BUG_ON(GHCB_SEV_GHCB_RESP_CODE(gpa) != 0);
+
+	if (sev_vtom_enabled())
+		gpa = sev_vtom_get_alias(gpa, true);
+
+	if (gpa == __pa(&boot_ghcb_page))
+		return &boot_ghcb_page;
+
+	return (struct ghcb *)__va(gpa);
+}
+
 static int vc_fetch_insn_kernel(struct es_em_ctxt *ctxt,
 				unsigned char *buffer)
 {
@@ -566,11 +581,22 @@ static enum es_result vc_handle_msr(struct ghcb *ghcb, struct es_em_ctxt *ctxt)
  * This function runs on the first #VC exception after the kernel
  * switched to virtual addresses.
  */
-static bool __init sev_es_setup_ghcb(void)
+bool __init sev_es_setup_ghcb(void)
 {
 	/* First make sure the hypervisor talks a supported protocol. */
 	if (!sev_es_negotiate_protocol())
 		return false;
+
+	/*
+	 * Before we can access boot_ghcb_page, we need to share it
+	 * with the hypervisor.
+	 */
+	if (sev_snp_active()) {
+		if (boot_ghcb == NULL)
+			sev_snp_setup_ghcb(&boot_ghcb_page);
+		else
+			sev_snp_setup_ghcb(&this_cpu_read(runtime_data)->ghcb_page);
+	}
 
 	/*
 	 * Clear the boot_ghcb. The first exception comes in before the bss
@@ -1149,6 +1175,15 @@ static enum es_result vc_handle_exitcode(struct es_em_ctxt *ctxt,
 {
 	enum es_result result;
 
+	if (ghcb != sev_es_current_ghcb()) {
+		if (sev_snp_active()) {
+			sev_snp_setup_ghcb(ghcb);
+		} else {
+			BUG_ON(sev_vtom_enabled());
+			sev_es_wr_ghcb_msr(__pa(ghcb));
+		}
+	}
+
 	switch (exit_code) {
 	case SVM_EXIT_READ_DR7:
 		result = vc_handle_dr7_read(ghcb, ctxt);
@@ -1375,8 +1410,8 @@ bool __init handle_vc_boot_ghcb(struct pt_regs *regs)
 	struct es_em_ctxt ctxt;
 	enum es_result result;
 
-	/* Do initial setup or terminate the guest */
-	if (unlikely(boot_ghcb == NULL && !sev_es_setup_ghcb()))
+	/* The initial setup should have already be done. */
+	if (unlikely(boot_ghcb == NULL))
 		sev_es_terminate(GHCB_SEV_ES_REASON_GENERAL_REQUEST);
 
 	vc_ghcb_invalidate(boot_ghcb);
