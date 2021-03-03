@@ -176,4 +176,8 @@ union sev_rmp_adjust
 			: "r" (addr), "r" (largepage), "r" (validate) \
 			: "cc", "rax", "rcx", "rdx")
 
+struct ghcb *sev_es_current_ghcb(void);
+void sev_es_terminate(unsigned int reason);
+void sev_snp_setup_ghcb(struct ghcb *ghcb);
+
 #endif
