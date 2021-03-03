@@ -40,6 +40,7 @@
 u64 sme_me_mask __section(".data") = 0;
 u64 sev_status __section(".data") = 0;
 u64 sev_check_data __section(".data") = 0;
+u64 sev_vtom __section(".data") = 0x8000000000;
 EXPORT_SYMBOL(sme_me_mask);
 DEFINE_STATIC_KEY_FALSE(sev_enable_key);
 EXPORT_SYMBOL_GPL(sev_enable_key);
@@ -253,7 +254,9 @@ static void __init __set_clr_pte_enc(pte_t *kpte, int level, bool enc)
 	}
 
 	new_prot = old_prot;
-	if (enc)
+	if (sev_vtom_enabled())
+		pgprot_val(new_prot) = sev_vtom_get_alias(pgprot_val(new_prot), enc);
+	else if (enc)
 		pgprot_val(new_prot) |= _PAGE_ENC;
 	else
 		pgprot_val(new_prot) &= ~_PAGE_ENC;
@@ -397,6 +400,12 @@ bool noinstr sev_snp_active(void)
 bool noinstr sev_vtom_enabled(void)
 {
 	return sev_status & MSR_AMD64_SEV_VTOM_ENABLED;
+}
+
+u64 noinstr sev_vtom_get_alias(u64 gpa, bool enc)
+{
+	BUG_ON(sev_vtom_enabled() == false);
+	return enc ? (gpa & ~sev_vtom) : (gpa | sev_vtom);
 }
 
 bool noinstr sev_reflectvc_enabled(void)
