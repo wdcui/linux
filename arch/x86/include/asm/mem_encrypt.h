@@ -21,6 +21,7 @@
 extern u64 sme_me_mask;
 extern u64 sev_status;
 extern bool sev_enabled;
+extern u64 sev_vtom;
 
 void sme_encrypt_execute(unsigned long encrypted_kernel_vaddr,
 			 unsigned long decrypted_kernel_vaddr,
@@ -56,6 +57,7 @@ bool sev_active(void);
 bool sev_es_active(void);
 bool sev_snp_active(void);
 bool sev_vtom_enabled(void);
+u64 sev_vtom_get_alias(u64 gpa, bool enc);
 bool sev_reflectvc_enabled(void);
 bool sev_restricted_injection_enabled(void);
 bool sev_alternate_injection_enabled(void);
@@ -86,6 +88,7 @@ static inline bool sev_active(void) { return false; }
 static inline bool sev_es_active(void) { return false; }
 static inline bool sev_snp_active(void) { return false; }
 static inline bool sev_vtom_enabled(void) { return false; }
+static inline u64 sev_vtom_get_alias(u64 gpa, bool enc) { return 0; }
 static inline bool sev_reflectvc_enabled(void) { return false; }
 static inline bool sev_restricted_injection_enabled(void) { return false; }
 static inline bool sev_alternate_injection_enabled(void) { return false; }
@@ -114,7 +117,7 @@ extern char __start_bss_decrypted[], __end_bss_decrypted[], __start_bss_decrypte
 
 static inline bool mem_encrypt_active(void)
 {
-	return sme_me_mask;
+	return sme_me_mask || sev_vtom_enabled();
 }
 
 static inline u64 sme_get_me_mask(void)
