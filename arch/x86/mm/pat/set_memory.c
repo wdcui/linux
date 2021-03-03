@@ -27,6 +27,7 @@
 #include <asm/proto.h>
 #include <asm/memtype.h>
 #include <asm/set_memory.h>
+#include <asm/sev-es.h>
 
 #include "../mm_internal.h"
 
@@ -1554,6 +1555,19 @@ repeat:
 		if (pte_val(old_pte) != pte_val(new_pte)) {
 			set_pte_atomic(kpte, new_pte);
 			cpa->flags |= CPA_FLUSHTLB;
+			if (sev_snp_active()) {
+				if (sev_vtom_enabled()) {
+					if (pgprot_val(cpa->mask_clr) & sev_vtom)
+						sev_snp_change_page_state(pfn << PAGE_SHIFT, true);
+					else if (pgprot_val(cpa->mask_set) & sev_vtom)
+						sev_snp_change_page_state(pfn << PAGE_SHIFT, false);
+				} else {
+					if (pgprot_val(cpa->mask_set) & _PAGE_ENC)
+						sev_snp_change_page_state(pfn << PAGE_SHIFT, true);
+					else if (pgprot_val(cpa->mask_clr) & _PAGE_ENC)
+						sev_snp_change_page_state(pfn << PAGE_SHIFT, false);
+				}
+			}
 		}
 		cpa->numpages = 1;
 		return 0;
