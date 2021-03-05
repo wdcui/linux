@@ -17,6 +17,7 @@
 #include <asm/hyperv-tlfs.h>
 #include <asm/mshyperv.h>
 #include <asm/idtentry.h>
+#include <asm/sev-es.h>
 #include <linux/kexec.h>
 #include <linux/version.h>
 #include <linux/vmalloc.h>
@@ -28,6 +29,7 @@
 #include <linux/syscore_ops.h>
 #include <clocksource/hyperv_timer.h>
 #include <linux/highmem.h>
+#include <linux/set_memory.h>
 
 int hyperv_init_cpuhp;
 u64 hv_current_partition_id = ~0ull;
@@ -82,17 +84,21 @@ static int hv_cpu_init(unsigned int cpu)
 	struct hv_vp_assist_page **hvp = &hv_vp_assist_page[smp_processor_id()];
 	void **input_arg;
 	struct page *pg;
-	u64 ghcb_gpa;
-	void *ghcb_va;
 	void **ghcb_base;
+	void *page_addr;
 
 	/* hv_cpu_init() can be called with IRQs disabled from hv_resume() */
 	pg = alloc_pages(irqs_disabled() ? GFP_ATOMIC : GFP_KERNEL, hv_root_partition ? 1 : 0);
 	if (unlikely(!pg))
 		return -ENOMEM;
+	page_addr = page_address(pg);
+
+	if (hv_isolation_type_snp() && !hv_isolation_has_paravisor()) {
+		BUG_ON(set_memory_decrypted((unsigned long)page_addr, 1) != 0);
+	}
 
 	input_arg = (void **)this_cpu_ptr(hyperv_pcpu_input_arg);
-	*input_arg = page_address(pg);
+	*input_arg = page_addr;
 	if (hv_root_partition) {
 		void **output_arg;
 
@@ -124,7 +130,11 @@ static int hv_cpu_init(unsigned int cpu)
 	if (*hvp) {
 		u64 val;
 
-		val = vmalloc_to_pfn(*hvp);
+		if (hv_isolation_type_snp() && !hv_isolation_has_paravisor()) {
+			BUG_ON(set_memory_decrypted((unsigned long)(*hvp), 1) != 0);
+			memset(*hvp, 0, PAGE_SIZE);
+		}
+		val = virt_to_hvpfn(*hvp);
 		val = (val << HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT) |
 			HV_X64_MSR_VP_ASSIST_PAGE_ENABLE;
 
@@ -132,14 +142,8 @@ static int hv_cpu_init(unsigned int cpu)
 	}
 
 	if (ms_hyperv.ghcb_base) {
-		rdmsrl(MSR_AMD64_SEV_ES_GHCB, ghcb_gpa);
-
-		ghcb_va = ioremap_cache(ghcb_gpa, HV_HYP_PAGE_SIZE);
-		if (!ghcb_va)
-			return -ENOMEM;
-
 		ghcb_base = (void **)this_cpu_ptr(ms_hyperv.ghcb_base);
-		*ghcb_base = ghcb_va;
+		*ghcb_base = sev_es_current_ghcb();
 	}
 
 	return 0;
@@ -253,13 +257,13 @@ static int hv_cpu_die(unsigned int cpu)
 
 	if (ms_hyperv.ghcb_base) {
 		ghcb_va = (void **)this_cpu_ptr(ms_hyperv.ghcb_base);
-		if (*ghcb_va)
-			iounmap(*ghcb_va);
 		*ghcb_va = NULL;
 	}
 
 	local_irq_restore(flags);
 
+	if (hv_isolation_type_snp() && !hv_isolation_has_paravisor())
+		BUG_ON(set_memory_encrypted((unsigned long)pg, 1) != 0);
 	free_pages((unsigned long)pg, hv_root_partition ? 1 : 0);
 
 	if (hv_vp_assist_page && hv_vp_assist_page[cpu])
@@ -343,7 +347,7 @@ static void hv_resume(void)
 	rdmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
 	hypercall_msr.enable = 1;
 	hypercall_msr.guest_physical_address =
-		vmalloc_to_pfn(hv_hypercall_pg_saved);
+		virt_to_hvpfn(hv_hypercall_pg_saved);
 	wrmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
 
 	hv_hypercall_pg = hv_hypercall_pg_saved;
@@ -381,6 +385,38 @@ static void __init hv_get_partition_id(void)
 	local_irq_restore(flags);
 }
 
+static u8 __init get_current_vtl(void)
+{
+	u64 control = ((u64)1 << HV_HYPERCALL_REP_COMP_OFFSET) | HVCALL_GET_VP_REGISTERS;
+	struct hv_get_vp_registers_input *input = NULL;
+	struct hv_get_vp_registers_output *output = NULL;
+	u8 vtl = 0;
+	int ret;
+	unsigned long flags;
+
+	local_irq_save(flags);
+	input = *(struct hv_get_vp_registers_input **)this_cpu_ptr(hyperv_pcpu_input_arg);
+	output = (struct hv_get_vp_registers_output *)input;
+	if (!input || !output) {
+		pr_err("Hyper-V: cannot allocate a shared page!");
+		goto done;
+	}
+
+	memset(input, 0, sizeof(*input) + sizeof(input->element[0]));
+	input->header.partitionid = HV_PARTITION_ID_SELF;
+	input->header.inputvtl = 0;
+	input->element[0].name0 = 0x000D0003; // HvRegisterVsmVpStatus
+	ret = hv_do_hypercall(control, input, output);
+	if (ret == 0)
+		vtl = output->as64.low & 0xf;
+	else
+		pr_err("Hyper-V: failed to get the current VTL!");
+	local_irq_restore(flags);
+
+done:
+	return vtl;
+}
+
 /*
  * This function is to be invoked early in the boot sequence after the
  * hypervisor has been detected.
@@ -394,8 +430,6 @@ void __init hyperv_init(void)
 	u64 guest_id, required_msrs;
 	union hv_x64_msr_hypercall_contents hypercall_msr;
 	int cpuhp, i;
-	u64 ghcb_gpa;
-	void *ghcb_va;
 	void **ghcb_base;
 
 	if (x86_hyper_type != X86_HYPER_MS_HYPERV)
@@ -460,21 +494,16 @@ void __init hyperv_init(void)
 	if (hv_hypercall_pg == NULL)
 		goto clean_guest_os_id;
 
+	if (hv_isolation_type_snp() && !hv_isolation_has_paravisor())
+		BUG_ON(set_memory_decrypted((unsigned long)hv_hypercall_pg, 1) != 0);
+
 	if (hv_isolation_type_snp()) {
 		ms_hyperv.ghcb_base = alloc_percpu(void *);
 		if (!ms_hyperv.ghcb_base)
 			goto clean_guest_os_id;
 
-		rdmsrl(MSR_AMD64_SEV_ES_GHCB, ghcb_gpa);
-		ghcb_va = ioremap_cache(ghcb_gpa, HV_HYP_PAGE_SIZE);
-		if (!ghcb_va) {
-			free_percpu(ms_hyperv.ghcb_base);
-			ms_hyperv.ghcb_base = NULL;
-			goto clean_guest_os_id;
-		}
-
 		ghcb_base = (void **)this_cpu_ptr(ms_hyperv.ghcb_base);
-		*ghcb_base = ghcb_va;
+		*ghcb_base = sev_es_current_ghcb();
 
 		/* Hyper-V requires to write guest os id via ghcb in SNP IVM. */
 		hv_ghcb_msr_write(HV_X64_MSR_GUEST_OS_ID, guest_id);
@@ -508,7 +537,7 @@ void __init hyperv_init(void)
 		memunmap(src);
 		kunmap(pg);
 	} else {
-		hypercall_msr.guest_physical_address = vmalloc_to_pfn(hv_hypercall_pg);
+		hypercall_msr.guest_physical_address = virt_to_hvpfn(hv_hypercall_pg);
 		wrmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
 	}
 
@@ -539,6 +568,9 @@ void __init hyperv_init(void)
 	if (hv_root_partition)
 		x86_init.irqs.create_pci_msi_domain = hv_create_pci_msi_domain;
 #endif
+
+	/* Find the current VTL */
+	ms_hyperv.vtl = get_current_vtl();
 
 	return;
 

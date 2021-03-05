@@ -48,12 +48,14 @@ struct ms_hyperv_info {
 	};
 	void  __percpu **ghcb_base;
 	u64 shared_gpa_boundary;
+	u8 vtl;
 };
 extern struct ms_hyperv_info ms_hyperv;
 
 extern u64 hv_do_hypercall(u64 control, void *inputaddr, void *outputaddr);
 extern u64 hv_do_fast_hypercall8(u16 control, u64 input8);
 extern bool hv_isolation_type_snp(void);
+extern bool hv_isolation_has_paravisor(void);
 
 /* Generate the guest OS identifier as described in the Hyper-V TLFS */
 static inline  __u64 generate_guest_id(__u64 d_info1, __u64 kernel_version,

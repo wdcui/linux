@@ -19,6 +19,7 @@
 #include <linux/vmalloc.h>
 #include <linux/hyperv.h>
 #include <linux/export.h>
+#include <linux/set_memory.h>
 #include <asm/mshyperv.h>
 
 #include "hyperv_vmbus.h"
@@ -93,19 +94,15 @@ int vmbus_negotiate_version(struct vmbus_channel_msginfo *msginfo, u32 version)
 	 */
 	if (version >= VERSION_WIN10_V5) {
 		msg->msg_sint = VMBUS_MESSAGE_SINT;
+		msg->msg_vtl = ms_hyperv.vtl;
 		vmbus_connection.msg_conn_id = VMBUS_MESSAGE_CONNECTION_ID_4;
 	} else {
-		msg->interrupt_page = virt_to_phys(vmbus_connection.int_page);
+		msg->interrupt_page = virt_to_hvpfn(vmbus_connection.int_page) << PAGE_SHIFT;
 		vmbus_connection.msg_conn_id = VMBUS_MESSAGE_CONNECTION_ID;
 	}
 
-	msg->monitor_page1 = virt_to_phys(vmbus_connection.monitor_pages[0]);
-	msg->monitor_page2 = virt_to_phys(vmbus_connection.monitor_pages[1]);
-
-	if (hv_isolation_type_snp()) {
-		msg->monitor_page1 += ms_hyperv.shared_gpa_boundary;
-		msg->monitor_page2 += ms_hyperv.shared_gpa_boundary;
-	}
+	msg->monitor_page1 = virt_to_hvpfn(vmbus_connection.monitor_pages[0]) << PAGE_SHIFT;
+	msg->monitor_page2 = virt_to_hvpfn(vmbus_connection.monitor_pages[1]) << PAGE_SHIFT;
 
 	msg->target_vcpu = hv_cpu_number_to_vp_number(VMBUS_CONNECT_CPU);
 
@@ -151,29 +148,6 @@ int vmbus_negotiate_version(struct vmbus_channel_msginfo *msginfo, u32 version)
 		return -ECONNREFUSED;
 	}
 
-	if (hv_isolation_type_snp()) {
-		vmbus_connection.monitor_pages_va[0]
-			= vmbus_connection.monitor_pages[0];
-		vmbus_connection.monitor_pages[0]
-			= ioremap_cache(msg->monitor_page1, HV_HYP_PAGE_SIZE);
-		if (!vmbus_connection.monitor_pages[0])
-			return -ENOMEM;
-
-		vmbus_connection.monitor_pages_va[1]
-			= vmbus_connection.monitor_pages[1];
-		vmbus_connection.monitor_pages[1]
-			= ioremap_cache(msg->monitor_page2, HV_HYP_PAGE_SIZE);
-		if (!vmbus_connection.monitor_pages[1]) {
-			vunmap(vmbus_connection.monitor_pages[0]);
-			return -ENOMEM;
-		}
-
-		memset(vmbus_connection.monitor_pages[0], 0x00,
-		       HV_HYP_PAGE_SIZE);
-		memset(vmbus_connection.monitor_pages[1], 0x00,
-		       HV_HYP_PAGE_SIZE);
-	}
-
 	return ret;
 }
 
@@ -185,7 +159,6 @@ int vmbus_connect(void)
 	struct vmbus_channel_msginfo *msginfo = NULL;
 	int i, ret = 0;
 	__u32 version;
-	u64 pfn[2];
 
 	/* Initialize the vmbus connection */
 	vmbus_connection.conn_state = CONNECTING;
@@ -219,11 +192,15 @@ int vmbus_connect(void)
 	 * Setup the vmbus event connection for channel interrupt
 	 * abstraction stuff
 	 */
-	vmbus_connection.int_page =
-	(void *)hv_alloc_hyperv_zeroed_page();
+	vmbus_connection.int_page = (void *)hv_alloc_hyperv_zeroed_page();
 	if (vmbus_connection.int_page == NULL) {
 		ret = -ENOMEM;
 		goto cleanup;
+	}
+
+	if (hv_isolation_type_snp() && !hv_isolation_has_paravisor()) {
+		BUG_ON(set_memory_decrypted((unsigned long)vmbus_connection.int_page, 1) != 0);
+		memset(vmbus_connection.int_page, 0, PAGE_SIZE);
 	}
 
 	vmbus_connection.recv_int_page = vmbus_connection.int_page;
@@ -244,13 +221,10 @@ int vmbus_connect(void)
 	}
 
 	if (hv_isolation_type_snp()) {
-		pfn[0] = virt_to_hvpfn(vmbus_connection.monitor_pages[0]);
-		pfn[1] = virt_to_hvpfn(vmbus_connection.monitor_pages[1]);
-		if (hv_mark_gpa_visibility(2, pfn,
-				VMBUS_PAGE_VISIBLE_READ_WRITE)) {
-			ret = -EFAULT;
-			goto cleanup;
-		}
+		BUG_ON(set_memory_decrypted((unsigned long)vmbus_connection.monitor_pages[0], 1));
+		BUG_ON(set_memory_decrypted((unsigned long)vmbus_connection.monitor_pages[1], 1));
+		memset(vmbus_connection.monitor_pages[0], 0, PAGE_SIZE);
+		memset(vmbus_connection.monitor_pages[1], 0, PAGE_SIZE);
 	}
 
 	msginfo = kzalloc(sizeof(*msginfo) +
@@ -319,8 +293,6 @@ cleanup:
 
 void vmbus_disconnect(void)
 {
-	u64 pfn[2];
-
 	/*
 	 * First send the unload request to the host.
 	 */
@@ -336,6 +308,8 @@ void vmbus_disconnect(void)
 		destroy_workqueue(vmbus_connection.work_queue);
 
 	if (vmbus_connection.int_page) {
+		if (hv_isolation_type_snp() && !hv_isolation_has_paravisor())
+			BUG_ON(set_memory_encrypted((unsigned long)vmbus_connection.int_page, 1) != 0);
 		hv_free_hyperv_page((unsigned long)vmbus_connection.int_page);
 		vmbus_connection.int_page = NULL;
 	}
@@ -355,9 +329,8 @@ void vmbus_disconnect(void)
 			vmbus_connection.monitor_pages_va[1] = NULL;
 		}
 
-		pfn[0] = virt_to_hvpfn(vmbus_connection.monitor_pages[0]);
-		pfn[1] = virt_to_hvpfn(vmbus_connection.monitor_pages[1]);
-		hv_mark_gpa_visibility(2, pfn, VMBUS_PAGE_NOT_VISIBLE);
+		BUG_ON(set_memory_encrypted((unsigned long)vmbus_connection.monitor_pages[0], 1));
+		BUG_ON(set_memory_encrypted((unsigned long)vmbus_connection.monitor_pages[1], 1));
 	}
 
 	hv_free_hyperv_page((unsigned long)vmbus_connection.monitor_pages[0]);

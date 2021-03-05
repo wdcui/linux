@@ -329,12 +329,9 @@ static int netvsc_init_buf(struct hv_device *device,
 	struct nvsp_1_message_send_receive_buffer_complete *resp;
 	struct net_device *ndev = hv_get_drvdata(device);
 	struct nvsp_message *init_packet;
-	struct vm_struct *area;
-	u64 extra_phys;
 	unsigned int buf_size;
-	unsigned long vaddr;
 	size_t map_words;
-	int ret = 0, i;
+	int ret = 0;
 
 	ret = hv_bounce_resources_reserve(device->channel,
 			PAGE_SIZE * 1024);
@@ -377,28 +374,6 @@ static int netvsc_init_buf(struct hv_device *device,
 			"unable to establish receive buffer's gpadl\n");
 		goto cleanup;
 	}
-
-	if (hv_isolation_type_snp()) {
-		area = get_vm_area(buf_size, VM_IOREMAP);
-		if (!area)
-			goto cleanup;
-
-		vaddr = (unsigned long)area->addr;
-		for (i = 0; i < buf_size / HV_HYP_PAGE_SIZE; i++) {
-			extra_phys = (virt_to_hvpfn(net_device->recv_buf + i * HV_HYP_PAGE_SIZE)
-				<< HV_HYP_PAGE_SHIFT) + ms_hyperv.shared_gpa_boundary;
-			ret |= ioremap_page_range(vaddr + i * HV_HYP_PAGE_SIZE,
-					   vaddr + (i + 1) * HV_HYP_PAGE_SIZE,
-					   extra_phys, PAGE_KERNEL_IO);
-		}
-
-		if (ret)
-			goto cleanup;
-
-		net_device->recv_original_buf = net_device->recv_buf;
-		net_device->recv_buf = (void*)vaddr;
-	}
-
 
 	/* Notify the NetVsp of the gpadl handle */
 	init_packet = &net_device->channel_init_pkt;
@@ -497,29 +472,6 @@ static int netvsc_init_buf(struct hv_device *device,
 		goto cleanup;
 	}
 
-	if (hv_isolation_type_snp()) {
-		area = get_vm_area(buf_size , VM_IOREMAP);
-		if (!area)
-			goto cleanup;
-
-		vaddr = (unsigned long)area->addr;
-	
-		for (i = 0; i < buf_size / HV_HYP_PAGE_SIZE; i++) {
-			extra_phys = (virt_to_hvpfn(net_device->send_buf + i * HV_HYP_PAGE_SIZE)
-				<< HV_HYP_PAGE_SHIFT) + ms_hyperv.shared_gpa_boundary;
-			ret |= ioremap_page_range(vaddr + i * HV_HYP_PAGE_SIZE,
-					   vaddr + (i + 1) * HV_HYP_PAGE_SIZE,
-					   extra_phys, PAGE_KERNEL_IO);
-		}
-
-		if (ret)
-			goto cleanup;
-
-		net_device->send_original_buf = net_device->send_buf;
-		net_device->send_buf = (void*)vaddr;	
-	}
-
-	
 	/* Notify the NetVsp of the gpadl handle */
 	init_packet = &net_device->channel_init_pkt;
 	memset(init_packet, 0, sizeof(struct nvsp_message));

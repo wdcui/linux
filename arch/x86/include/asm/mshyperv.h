@@ -5,6 +5,7 @@
 #include <linux/types.h>
 #include <linux/nmi.h>
 #include <linux/msi.h>
+#include <linux/hyperv.h>
 #include <asm/io.h>
 #include <asm/hyperv-tlfs.h>
 #include <asm/nospec-branch.h>
@@ -88,21 +89,30 @@ int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags);
 
 static inline u64 hv_do_hypercall(u64 control, void *input, void *output)
 {
-	u64 input_address = input ? virt_to_phys(input) : 0;
-	u64 output_address = output ? virt_to_phys(output) : 0;
+	u64 input_address = input ? (virt_to_hvpfn(input) << PAGE_SHIFT) : 0;
+	u64 output_address = output ? (virt_to_hvpfn(output) << PAGE_SHIFT) : 0;
 	u64 hv_status;
 
 #ifdef CONFIG_X86_64
-	if (!hv_hypercall_pg)
-		return U64_MAX;
+	if (sev_snp_active()) {
+		__asm__ __volatile__("mov %4, %%r8\n"
+				"vmmcall"
+				: "=a" (hv_status), ASM_CALL_CONSTRAINT,
+				"+c" (control), "+d" (input_address)
+				:  "r" (output_address)
+				: "cc", "memory", "r8", "r9", "r10", "r11");
+	} else {
+		if (!hv_hypercall_pg)
+			return U64_MAX;
 
-	__asm__ __volatile__("mov %4, %%r8\n"
-			     CALL_NOSPEC
-			     : "=a" (hv_status), ASM_CALL_CONSTRAINT,
-			       "+c" (control), "+d" (input_address)
-			     :  "r" (output_address),
-				THUNK_TARGET(hv_hypercall_pg)
-			     : "cc", "memory", "r8", "r9", "r10", "r11");
+		__asm__ __volatile__("mov %4, %%r8\n"
+				CALL_NOSPEC
+				: "=a" (hv_status), ASM_CALL_CONSTRAINT,
+				"+c" (control), "+d" (input_address)
+				:  "r" (output_address),
+					THUNK_TARGET(hv_hypercall_pg)
+				: "cc", "memory", "r8", "r9", "r10", "r11");
+	}
 #else
 	u32 input_address_hi = upper_32_bits(input_address);
 	u32 input_address_lo = lower_32_bits(input_address);
@@ -128,6 +138,8 @@ static inline u64 hv_do_hypercall(u64 control, void *input, void *output)
 static inline u64 hv_do_fast_hypercall8(u16 code, u64 input1)
 {
 	u64 hv_status, control = (u64)code | HV_HYPERCALL_FAST_BIT;
+
+	BUG_ON(sev_snp_active());
 
 #ifdef CONFIG_X86_64
 	{
@@ -159,6 +171,8 @@ static inline u64 hv_do_fast_hypercall8(u16 code, u64 input1)
 static inline u64 hv_do_fast_hypercall16(u16 code, u64 input1, u64 input2)
 {
 	u64 hv_status, control = (u64)code | HV_HYPERCALL_FAST_BIT;
+
+	BUG_ON(sev_snp_active());
 
 #ifdef CONFIG_X86_64
 	{
@@ -267,14 +281,14 @@ struct irq_domain *hv_create_pci_msi_domain(void);
 int hv_map_ioapic_interrupt(int ioapic_id, bool level, int vcpu, int vector,
 		struct hv_interrupt_entry *entry);
 int hv_unmap_ioapic_interrupt(int ioapic_id, struct hv_interrupt_entry *entry);
-int hv_set_mem_host_visibility(void *kbuffer, u32 size, u32 visibility);
-int hv_mark_gpa_visibility(u16 count, const u64 pfn[], u32 visibility);
 void hv_sint_wrmsrl_ghcb(u64 msr, u64 value);
 void hv_sint_rdmsrl_ghcb(u64 msr, u64 *value);
 void hv_signal_eom_ghcb(void);
 void hv_ghcb_msr_write(u64 msr, u64 value);
 void hv_ghcb_msr_read(u64 msr, u64 *value);
 u64 hv_ghcb_hypercall(u64 control, void *input, void *output, u32 input_size);
+
+int hv_snp_boot_ap(int cpu, unsigned long start_ip);
 
 #define hv_get_synint_state_ghcb(int_num, val)			\
 	hv_sint_rdmsrl_ghcb(HV_X64_MSR_SINT0 + int_num, val)

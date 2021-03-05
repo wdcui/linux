@@ -656,8 +656,8 @@ struct vmbus_channel_initiate_contact {
 		u64 interrupt_page;
 		struct {
 			u8	msg_sint;
-			u8	padding1[3];
-			u32	padding2;
+			u8	msg_vtl;
+			u8	reserved[6];
 		};
 	};
 	u64 monitor_page1;
@@ -1750,6 +1750,8 @@ extern struct hyperv_pci_block_ops hvpci_block_ops;
 
 static inline unsigned long virt_to_hvpfn(void *addr)
 {
+	unsigned int level;
+	pte_t *pte;
 	phys_addr_t paddr;
 
 	if (is_vmalloc_addr(addr))
@@ -1757,6 +1759,13 @@ static inline unsigned long virt_to_hvpfn(void *addr)
 				     offset_in_page(addr);
 	else
 		paddr = __pa(addr);
+
+	if (sev_vtom_enabled()) {
+		pte = lookup_address((unsigned long)addr, &level);
+		BUG_ON(!pte || !(pte_val(*pte) & _PAGE_PRESENT));
+		if (sev_vtom_get_alias(pte_val(*pte), false) == pte_val(*pte))
+			paddr = sev_vtom_get_alias(paddr, false);
+	}
 
 	return  paddr >> HV_HYP_PAGE_SHIFT;
 }

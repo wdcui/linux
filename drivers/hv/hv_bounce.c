@@ -10,6 +10,7 @@
 
 #include "hyperv_vmbus.h"
 #include <linux/uio.h>
+#include <linux/set_memory.h>
 #include <asm/mshyperv.h>
 
 /* BP == Bounce Pages here */
@@ -135,26 +136,10 @@ static void hv_bounce_pkt_release(struct vmbus_channel *channel,
 static void hv_bounce_page_list_free(struct vmbus_channel *channel,
 				     const struct list_head *head)
 {
-	u16 count = 0;
-	u64 pfn[HV_MIN_BOUNCE_BUFFER_PAGES];
 	struct hv_bounce_page_list *bounce_page;
 	struct hv_bounce_page_list *tmp;
 
 	BUILD_BUG_ON(HV_MIN_BOUNCE_BUFFER_PAGES > HV_MAX_MODIFY_GPA_REP_COUNT);
-	list_for_each_entry(bounce_page, head, link) {
-		if (hv_isolation_type_snp())
-			pfn[count++] = virt_to_hvpfn(
-					(void *)bounce_page->bounce_original_va);
-		else
-			pfn[count++] = virt_to_hvpfn(
-					(void *)bounce_page->bounce_va);
-
-		if (count < HV_MIN_BOUNCE_BUFFER_PAGES &&
-		    !list_is_last(&bounce_page->link, head))
-			continue;
-		hv_mark_gpa_visibility(count, pfn, VMBUS_PAGE_NOT_VISIBLE);
-		count = 0;
-	}
 
 	/*
 	 * Need a second iteration because the page should not be freed until
@@ -163,11 +148,9 @@ static void hv_bounce_page_list_free(struct vmbus_channel *channel,
 	list_for_each_entry_safe(bounce_page, tmp, head, link) {
 		list_del(&bounce_page->link);
 
-		if (hv_isolation_type_snp()) {
-			vunmap((void *)bounce_page->bounce_va);
-			free_page(bounce_page->bounce_original_va);
-		} else
-			free_page(bounce_page->bounce_va);
+		if (hv_isolation_type_snp())
+			BUG_ON(set_memory_encrypted((unsigned long)bounce_page->bounce_va, 1) != 0);
+		free_page(bounce_page->bounce_va);
 
 		kmem_cache_free(channel->bounce_page_cache, bounce_page);
 	}
@@ -179,8 +162,6 @@ static int hv_bounce_page_list_alloc(struct vmbus_channel *channel, u32 count)
 	unsigned long flags;
 	struct list_head head;
 	u32 p;
-	u64 pfn[HV_MIN_BOUNCE_BUFFER_PAGES];
-	u32 pfn_count = 0;
 	bool queue_work = false;
 	int ret = -ENOSPC;
 	unsigned long va = 0;
@@ -198,38 +179,19 @@ static int hv_bounce_page_list_alloc(struct vmbus_channel *channel, u32 count)
 			goto err_free;
 
 		if (hv_isolation_type_snp()) {
-			bounce_page->bounce_extra_pfn =
-				virt_to_hvpfn((void *)va) +
-				(ms_hyperv.shared_gpa_boundary
-				 >> HV_HYP_PAGE_SHIFT);
+			BUG_ON(set_memory_decrypted(va, 1) != 0);
+			memset((void *)va, 0, PAGE_SIZE);
+			bounce_page->bounce_extra_pfn = virt_to_hvpfn((void *)va);
 			bounce_page->bounce_original_va = va;
-			bounce_page->bounce_va = (u64)ioremap_cache(
-				bounce_page->bounce_extra_pfn << HV_HYP_PAGE_SHIFT,
-				HV_HYP_PAGE_SIZE);
-			if (!bounce_page->bounce_va)
-				goto err_free;
+			bounce_page->bounce_va = va;
 		} else {
 			bounce_page->bounce_va = va;
 		}
 
-		pfn[pfn_count++] = virt_to_hvpfn((void *)va);
 		bounce_page->last_used_jiff = jiffies;
 
 		/* Add to the tail to maintain LRU sorting */
 		list_add_tail(&bounce_page->link, &head);
-		va = 0;
-		if (pfn_count == HV_MIN_BOUNCE_BUFFER_PAGES || p == count - 1) {
-			ret = hv_mark_gpa_visibility(pfn_count, pfn,
-					VMBUS_PAGE_VISIBLE_READ_WRITE);
-			if (hv_isolation_type_snp())
-				list_for_each_entry(bounce_page, &head, link)
-					memset((u64 *)bounce_page->bounce_va, 0x00,
-					       HV_HYP_PAGE_SIZE);
-
-			if (unlikely(ret < 0))
-				goto err_free;
-			pfn_count = 0;
-		}
 	}
 
 	spin_lock_irqsave(&channel->bp_lock, flags);
