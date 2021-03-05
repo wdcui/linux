@@ -221,13 +221,13 @@ static int hv_bounce_page_list_alloc(struct vmbus_channel *channel, u32 count)
 		if (pfn_count == HV_MIN_BOUNCE_BUFFER_PAGES || p == count - 1) {
 			ret = hv_mark_gpa_visibility(pfn_count, pfn,
 					VMBUS_PAGE_VISIBLE_READ_WRITE);
+			if (unlikely(ret < 0))
+				goto err_free;
 			if (hv_isolation_type_snp())
 				list_for_each_entry(bounce_page, &head, link)
 					memset((u64 *)bounce_page->bounce_va, 0x00,
 					       HV_HYP_PAGE_SIZE);
 
-			if (unlikely(ret < 0))
-				goto err_free;
 			pfn_count = 0;
 		}
 	}
