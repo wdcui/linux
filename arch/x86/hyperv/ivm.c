@@ -7,6 +7,7 @@
  */
 #include <linux/types.h>
 #include <linux/bitfield.h>
+#include <linux/mm.h>
 #include <asm/io.h>
 #include <asm/svm.h>
 #include <asm/sev-es.h>
@@ -202,6 +203,12 @@ bool hv_isolation_type_snp(void)
 }
 EXPORT_SYMBOL_GPL(hv_isolation_type_snp);
 
+bool hv_isolation_has_paravisor(void)
+{
+	return (ms_hyperv.features_b & HV_ISOLATION) && (ms_hyperv.isolation_config_a & 0x1);
+}
+EXPORT_SYMBOL_GPL(hv_isolation_has_paravisor);
+
 int hv_mark_gpa_visibility(u16 count, const u64 pfn[], u32 visibility)
 {
 	struct hv_input_modify_sparse_gpa_page_host_visibility **input_pcpu;
@@ -213,6 +220,14 @@ int hv_mark_gpa_visibility(u16 count, const u64 pfn[], u32 visibility)
 	/* no-op if partition isolation is not enabled */
 	if (!hv_is_isolation_supported())
 		return 0;
+
+	if (hv_isolation_type_snp() && !hv_isolation_has_paravisor()) {
+		int i;
+		for (i = 0; i < count; i++)
+			sev_snp_change_page_state(pfn[i] << PAGE_SHIFT, visibility == 0);
+
+		return 0;
+	}
 
 	if (count > HV_MAX_MODIFY_GPA_REP_COUNT) {
 		pr_err("Hyper-V: GPA count:%d exceeds supported:%lu\n", count,
@@ -245,3 +260,44 @@ int hv_mark_gpa_visibility(u16 count, const u64 pfn[], u32 visibility)
 	return -EFAULT;
 }
 EXPORT_SYMBOL(hv_mark_gpa_visibility);
+
+void *hv_alloc_shared_page(void)
+{
+	void *va;
+	u64 pa;
+	u64 biased_pa;
+	void *remapped_va;
+
+	va = (void *)__get_free_page(irqs_disabled() ? GFP_ATOMIC : GFP_KERNEL);
+	if (!va)
+		return NULL;
+	pa = virt_to_phys(va);
+	sev_snp_change_page_state(pa, false);
+	biased_pa = sev_vtom_get_alias(pa, false);
+	remapped_va = ioremap_cache(biased_pa, PAGE_SIZE);
+	if (remapped_va == NULL) {
+		free_page((unsigned long)va);
+		return NULL;
+	}
+	memset(remapped_va, 0, PAGE_SIZE);
+	return remapped_va;
+}
+EXPORT_SYMBOL_GPL(hv_alloc_hyperv_shared_page);
+
+void hv_free_shared_page(void *remapped_va)
+{
+	u64 biased_pa;
+	u64 pa;
+
+	if (remapped_va == NULL)
+		return;
+
+	BUG_ON(offset_in_page(remapped_va) != 0);
+	biased_pa = page_to_phys(vmalloc_to_page(remapped_va));
+	BUG_ON(sev_vtom_get_alias(biased_pa, true) == biased_pa);
+	iounmap(remapped_va);
+	pa = sev_vtom_get_alias(biased_pa, true);
+	sev_snp_change_page_state(pa, true);
+	free_page((unsigned long)phys_to_virt(pa));
+}
+EXPORT_SYMBOL_GPL(hv_free_hyperv_shared_page);

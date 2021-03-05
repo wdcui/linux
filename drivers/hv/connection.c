@@ -93,9 +93,10 @@ int vmbus_negotiate_version(struct vmbus_channel_msginfo *msginfo, u32 version)
 	 */
 	if (version >= VERSION_WIN10_V5) {
 		msg->msg_sint = VMBUS_MESSAGE_SINT;
+		msg->msg_vtl = ms_hyperv.vtl;
 		vmbus_connection.msg_conn_id = VMBUS_MESSAGE_CONNECTION_ID_4;
 	} else {
-		msg->interrupt_page = virt_to_phys(vmbus_connection.int_page);
+		msg->interrupt_page = virt_to_hvpfn(vmbus_connection.int_page) << PAGE_SHIFT;
 		vmbus_connection.msg_conn_id = VMBUS_MESSAGE_CONNECTION_ID;
 	}
 
@@ -219,8 +220,10 @@ int vmbus_connect(void)
 	 * Setup the vmbus event connection for channel interrupt
 	 * abstraction stuff
 	 */
-	vmbus_connection.int_page =
-	(void *)hv_alloc_hyperv_zeroed_page();
+	if (hv_isolation_type_snp() && !hv_isolation_has_paravisor())
+		vmbus_connection.int_page = hv_alloc_shared_page();
+	else
+		vmbus_connection.int_page = (void *)hv_alloc_hyperv_zeroed_page();
 	if (vmbus_connection.int_page == NULL) {
 		ret = -ENOMEM;
 		goto cleanup;
@@ -336,7 +339,10 @@ void vmbus_disconnect(void)
 		destroy_workqueue(vmbus_connection.work_queue);
 
 	if (vmbus_connection.int_page) {
-		hv_free_hyperv_page((unsigned long)vmbus_connection.int_page);
+		if (hv_isolation_type_snp() && !hv_isolation_has_paravisor())
+			hv_free_shared_page(vmbus_connection.int_page);
+		else
+			hv_free_hyperv_page((unsigned long)vmbus_connection.int_page);
 		vmbus_connection.int_page = NULL;
 	}
 

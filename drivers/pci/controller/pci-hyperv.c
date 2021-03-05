@@ -1195,6 +1195,7 @@ static void hv_irq_unmask(struct irq_data *data)
 {
 	struct msi_desc *msi_desc = irq_data_get_msi_desc(data);
 	struct irq_cfg *cfg = irqd_cfg(data);
+	struct hv_retarget_device_interrupt **arg;
 	struct hv_retarget_device_interrupt *params;
 	struct hv_pcibus_device *hbus;
 	struct cpumask *dest;
@@ -1213,7 +1214,10 @@ static void hv_irq_unmask(struct irq_data *data)
 
 	spin_lock_irqsave(&hbus->retarget_msi_interrupt_lock, flags);
 
-	params = &hbus->retarget_msi_interrupt_params;
+	arg = (struct hv_retarget_device_interrupt **)this_cpu_ptr(hyperv_pcpu_input_arg);
+	params = *arg;
+	BUG_ON(!params);
+
 	memset(params, 0, sizeof(*params));
 	params->partition_id = HV_PARTITION_ID_SELF;
 	params->int_entry.source = HV_INTERRUPT_SOURCE_MSI;

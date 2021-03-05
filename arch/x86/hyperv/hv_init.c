@@ -85,14 +85,22 @@ static int hv_cpu_init(unsigned int cpu)
 	u64 ghcb_gpa;
 	void *ghcb_va;
 	void **ghcb_base;
+	void *page_addr;
 
 	/* hv_cpu_init() can be called with IRQs disabled from hv_resume() */
-	pg = alloc_pages(irqs_disabled() ? GFP_ATOMIC : GFP_KERNEL, hv_root_partition ? 1 : 0);
-	if (unlikely(!pg))
-		return -ENOMEM;
+	if (hv_isolation_type_snp() && !hv_isolation_has_paravisor()) {
+		page_addr = hv_alloc_shared_page();
+		if (unlikely(!page_addr))
+			return -ENOMEM;
+	} else {
+		pg = alloc_pages(irqs_disabled() ? GFP_ATOMIC : GFP_KERNEL, hv_root_partition ? 1 : 0);
+		if (unlikely(!pg))
+			return -ENOMEM;
+		page_addr = page_address(pg);
+	}
 
 	input_arg = (void **)this_cpu_ptr(hyperv_pcpu_input_arg);
-	*input_arg = page_address(pg);
+	*input_arg = page_addr;
 	if (hv_root_partition) {
 		void **output_arg;
 
@@ -118,7 +126,10 @@ static int hv_cpu_init(unsigned int cpu)
 	 * not be stopped in the case of CPU offlining and the VM will hang.
 	 */
 	if (!*hvp) {
-		*hvp = __vmalloc(PAGE_SIZE, GFP_KERNEL | __GFP_ZERO);
+		if (hv_isolation_type_snp() && !hv_isolation_has_paravisor())
+			*hvp = hv_alloc_shared_page();
+		else
+			*hvp = __vmalloc(PAGE_SIZE, GFP_KERNEL | __GFP_ZERO);
 	}
 
 	if (*hvp) {
@@ -260,7 +271,10 @@ static int hv_cpu_die(unsigned int cpu)
 
 	local_irq_restore(flags);
 
-	free_pages((unsigned long)pg, hv_root_partition ? 1 : 0);
+	if (hv_isolation_type_snp() && !hv_isolation_has_paravisor())
+		hv_free_shared_page(pg);
+	else
+		free_pages((unsigned long)pg, hv_root_partition ? 1 : 0);
 
 	if (hv_vp_assist_page && hv_vp_assist_page[cpu])
 		wrmsrl(HV_X64_MSR_VP_ASSIST_PAGE, 0);
@@ -381,6 +395,37 @@ static void __init hv_get_partition_id(void)
 	local_irq_restore(flags);
 }
 
+static u8 __init get_current_vtl(void)
+{
+	u64 control = ((u64)1 << HV_HYPERCALL_REP_COMP_OFFSET) | HVCALL_GET_VP_REGISTERS;
+	struct hv_get_vp_registers_input *input = NULL;
+	struct hv_get_vp_registers_output *output = NULL;
+	u8 vtl = 0;
+	int ret;
+
+	input = (struct hv_get_vp_registers_input *)hv_alloc_shared_page();
+	output = (struct hv_get_vp_registers_output *)hv_alloc_shared_page();
+	if (!input || !output) {
+		pr_err("Hyper-V: cannot allocate a shared page!");
+		goto done;
+	}
+
+	memset(input, 0, sizeof(*input) + sizeof(input->element[0]));
+	input->header.partitionid = HV_PARTITION_ID_SELF;
+	input->header.inputvtl = 0;
+	input->element[0].name0 = 0x000D0003; // HvRegisterVsmVpStatus
+	ret = hv_do_hypercall(control, input, output);
+	if (ret == 0)
+		vtl = output->as64.low & 0xf;
+	else
+		pr_err("Hyper-V: failed to get the current VTL!");
+
+done:
+	hv_free_shared_page(input);
+	hv_free_shared_page(output);
+	return vtl;
+}
+
 /*
  * This function is to be invoked early in the boot sequence after the
  * hypervisor has been detected.
@@ -440,7 +485,7 @@ void __init hyperv_init(void)
 		goto free_vp_index;
 	}
 
-	cpuhp = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "x86/hyperv_init:online",
+	cpuhp = cpuhp_setup_state(CPUHP_AP_HYPERV_ONLINE, "x86/hyperv_init:online",
 				  hv_cpu_init, hv_cpu_die);
 	if (cpuhp < 0)
 		goto free_vp_assist_page;
@@ -453,10 +498,13 @@ void __init hyperv_init(void)
 	guest_id = generate_guest_id(0, LINUX_VERSION_CODE, 0);
 	wrmsrl(HV_X64_MSR_GUEST_OS_ID, guest_id);
 
-	hv_hypercall_pg = __vmalloc_node_range(PAGE_SIZE, 1, VMALLOC_START,
-			VMALLOC_END, GFP_KERNEL, PAGE_KERNEL_ROX,
-			VM_FLUSH_RESET_PERMS, NUMA_NO_NODE,
-			__builtin_return_address(0));
+	if (hv_isolation_type_snp())
+		hv_hypercall_pg = hv_alloc_shared_page();
+	else
+		hv_hypercall_pg = __vmalloc_node_range(PAGE_SIZE, 1, VMALLOC_START,
+				VMALLOC_END, GFP_KERNEL, PAGE_KERNEL_ROX,
+				VM_FLUSH_RESET_PERMS, NUMA_NO_NODE,
+				__builtin_return_address(0));
 	if (hv_hypercall_pg == NULL)
 		goto clean_guest_os_id;
 
@@ -539,6 +587,9 @@ void __init hyperv_init(void)
 	if (hv_root_partition)
 		x86_init.irqs.create_pci_msi_domain = hv_create_pci_msi_domain;
 #endif
+
+	/* Find the current VTL */
+	ms_hyperv.vtl = get_current_vtl();
 
 	return;
 

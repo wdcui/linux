@@ -318,7 +318,7 @@ EXPORT_SYMBOL_GPL(hv_read_reference_counter);
 static union {
 	struct ms_hyperv_tsc_page page;
 	u8 reserved[PAGE_SIZE];
-} tsc_pg __aligned(PAGE_SIZE);
+} tsc_pg __bss_decrypted __aligned(PAGE_SIZE);
 
 struct ms_hyperv_tsc_page *hv_get_tsc_page(void)
 {
@@ -431,6 +431,8 @@ static bool __init hv_init_tsc_clocksource(void)
 
 	hv_read_reference_counter = read_hv_clock_tsc;
 	phys_addr = virt_to_phys(hv_get_tsc_page());
+	if (hv_isolation_type_snp())
+		phys_addr = sev_vtom_get_alias(phys_addr, false);
 
 	/*
 	 * The Hyper-V TLFS specifies to preserve the value of reserved

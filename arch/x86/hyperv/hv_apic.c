@@ -64,8 +64,13 @@ static u32 hv_apic_read(u32 reg)
 	case APIC_TASKPRI:
 		rdmsr(HV_X64_MSR_TPR, reg_val, hi);
 		return reg_val;
-
+	case APIC_ID:
+		if (hv_isolation_type_snp())
+			return smp_processor_id();
+		fallthrough;
 	default:
+		if (hv_isolation_type_snp())
+			return 0;
 		return native_apic_mem_read(reg);
 	}
 }
@@ -80,7 +85,8 @@ static void hv_apic_write(u32 reg, u32 val)
 		wrmsr(HV_X64_MSR_TPR, val, 0);
 		break;
 	default:
-		native_apic_mem_write(reg, val);
+		if (!hv_isolation_type_snp())
+			native_apic_mem_write(reg, val);
 	}
 }
 
@@ -136,11 +142,33 @@ ipi_mask_ex_done:
 	return ((ret == 0) ? true : false);
 }
 
+static bool __send_ipi_via_hypercall(u32 vector, u64 cpu_mask)
+{
+	struct hv_send_ipi **arg;
+	struct hv_send_ipi *ipi_arg;
+	unsigned long flags;
+	int ret = 1;
+
+	local_irq_save(flags);
+	arg = (struct hv_send_ipi **)this_cpu_ptr(hyperv_pcpu_input_arg);
+	ipi_arg = *arg;
+	if (unlikely(!ipi_arg))
+		goto ipi_done;
+
+	ipi_arg->vector = vector;
+	ipi_arg->reserved = 0;
+	ipi_arg->cpu_mask = cpu_mask;
+	ret = hv_do_hypercall(HVCALL_SEND_IPI, ipi_arg, NULL);
+
+ipi_done:
+	local_irq_restore(flags);
+	return ((ret == 0) ? true : false);
+}
+
 static bool __send_ipi_mask(const struct cpumask *mask, int vector)
 {
 	int cur_cpu, vcpu;
 	struct hv_send_ipi ipi_arg;
-	int ret = 1;
 
 	trace_hyperv_send_ipi_mask(mask, vector);
 
@@ -184,9 +212,11 @@ static bool __send_ipi_mask(const struct cpumask *mask, int vector)
 		__set_bit(vcpu, (unsigned long *)&ipi_arg.cpu_mask);
 	}
 
-	ret = hv_do_fast_hypercall16(HVCALL_SEND_IPI, ipi_arg.vector,
-				     ipi_arg.cpu_mask);
-	return ((ret == 0) ? true : false);
+	if (!hv_isolation_type_snp())
+		return !hv_do_fast_hypercall16(HVCALL_SEND_IPI, ipi_arg.vector,
+						ipi_arg.cpu_mask);
+
+	return __send_ipi_via_hypercall(ipi_arg.vector, ipi_arg.cpu_mask);
 
 do_ex_hypercall:
 	return __send_ipi_mask_ex(mask, vector);
@@ -207,7 +237,10 @@ static bool __send_ipi_one(int cpu, int vector)
 	if (vp >= 64)
 		return __send_ipi_mask_ex(cpumask_of(cpu), vector);
 
-	return !hv_do_fast_hypercall16(HVCALL_SEND_IPI, vector, BIT_ULL(vp));
+	if (!hv_isolation_type_snp())
+		return !hv_do_fast_hypercall16(HVCALL_SEND_IPI, vector, BIT_ULL(vp));
+
+	return __send_ipi_via_hypercall(vector, BIT_ULL(vp));
 }
 
 static void hv_send_ipi(int cpu, int vector)
@@ -282,13 +315,20 @@ void __init hv_apic_init(void)
 		 * exception is hv_apic_eoi_write, because it benefits from
 		 * lazy EOI when available, but the same accessor works for
 		 * both xapic and x2apic because the field layout is the same.
+		 *
+		 * For SNP guests, we let the #HV handler process EOI.
+		 * We also override the apic accessors since the hypervisor
+		 * does not support architectural x2apic MSRs.
 		 */
-		apic_set_eoi_write(hv_apic_eoi_write);
-		if (!x2apic_enabled()) {
+		if (!hv_isolation_type_snp())
+			apic_set_eoi_write(hv_apic_eoi_write);
+		if (!x2apic_enabled() || hv_isolation_type_snp()) {
 			apic->read      = hv_apic_read;
 			apic->write     = hv_apic_write;
 			apic->icr_write = hv_apic_icr_write;
 			apic->icr_read  = hv_apic_icr_read;
 		}
+		if (hv_isolation_type_snp() && !hv_isolation_has_paravisor())
+			apic->wakeup_secondary_cpu = hv_snp_boot_ap;
 	}
 }
