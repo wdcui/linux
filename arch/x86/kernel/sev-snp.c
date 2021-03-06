@@ -280,3 +280,35 @@ void sev_snp_change_page_state(u64 gpa, bool enc)
 			panic("Failed to PVALIDATE GPA=%llx\n", gpa);
 	}
 }
+
+int vmgexit_snp_guest_request(unsigned long request, unsigned long response)
+{
+	enum es_result ret;
+	struct ghcb *ghcb;
+	unsigned long request_pa, response_pa;
+	int fw_err;
+	unsigned long flags;
+
+	if (!sev_snp_active())
+		return -ENXIO;
+
+	request_pa = __pa(request);
+	response_pa = __pa(response);
+	if (sev_vtom_enabled()) {
+		request_pa = sev_vtom_get_alias(request_pa, false);
+		response_pa = sev_vtom_get_alias(response_pa, false);
+	}
+
+	local_irq_save(flags);
+	ghcb = sev_es_current_ghcb();
+	vc_ghcb_invalidate(ghcb);
+	ret = sev_es_ghcb_hv_call(ghcb, NULL, SVM_VMGEXIT_SNP_GUEST_REQUEST,
+				request_pa, response_pa);
+	fw_err = ghcb->save.sw_exit_info_2;
+	local_irq_restore(flags);
+
+	if (ret != ES_OK)
+		fw_err = -ENXIO;
+	return fw_err;
+}
+EXPORT_SYMBOL_GPL(vmgexit_snp_guest_request);
