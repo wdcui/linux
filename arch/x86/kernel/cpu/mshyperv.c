@@ -284,6 +284,8 @@ static __init void hv_snp_get_smp_config(unsigned int early)
 	}
 }
 
+static u8 ap_start_input_arg[PAGE_SIZE] __bss_decrypted __aligned(PAGE_SIZE);
+
 int hv_snp_boot_ap(int cpu, unsigned long start_ip)
 {
 	struct vmcb_save_area *vmsa = (struct vmcb_save_area *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
@@ -295,6 +297,9 @@ int hv_snp_boot_ap(int cpu, unsigned long start_ip)
 	union sev_rmp_adjust rmp_adjust;
 	void **arg;
 	unsigned long flags;
+
+	*(void **)per_cpu_ptr(hyperv_pcpu_input_arg, cpu) = ap_start_input_arg;
+	hv_vp_index[cpu] = cpu;
 
 	/* Prevent APs from entering busy calibration loop */
 	preset_lpj = lpj_fine;
