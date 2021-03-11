@@ -193,17 +193,39 @@ void hv_ringbuffer_pre_init(struct vmbus_channel *channel)
 int hv_ringbuffer_post_init(struct hv_ring_buffer_info *ring_info,
 		       struct page *pages, u32 page_cnt)
 {
-	unsigned long vaddr;
+	int i;
+	struct page **pages_wraparound;
+	pgprot_t prot = PAGE_KERNEL_NOENC;
 
 	if (!hv_isolation_type_snp())
 		return 0;
 
-	vaddr = (unsigned long)page_address(pages);
+	if (sev_vtom_enabled())
+		pgprot_val(prot) = sev_vtom_get_alias(pgprot_val(prot), false);
 
-	/* Clean memory after setting host visibility. */
-	memset((void *)vaddr, 0x00, page_cnt * PAGE_SIZE);
+	pages_wraparound = kcalloc(page_cnt * 2 - 1, sizeof(struct page *),
+					GFP_KERNEL);
+	if (!pages_wraparound)
+		return -ENOMEM;
 
-	ring_info->ring_buffer = (struct hv_ring_buffer *)vaddr;
+	pages_wraparound[0] = pages;
+	for (i = 0; i < 2 * (page_cnt - 1); i++)
+		pages_wraparound[i + 1] = &pages[i % (page_cnt - 1) + 1];
+
+	ring_info->ring_buffer = (struct hv_ring_buffer *)
+		vmap(pages_wraparound, page_cnt * 2 - 1, VM_MAP, prot);
+
+	kfree(pages_wraparound);
+
+	if (!ring_info->ring_buffer)
+		return -ENOMEM;
+
+	ring_info->ring_buffer->read_index =
+		ring_info->ring_buffer->write_index = 0;
+
+	/* Set the feature bit for enabling flow control. */
+	ring_info->ring_buffer->feature_bits.value = 1;
+
 	ring_info->ring_buffer->read_index = 0;
 	ring_info->ring_buffer->write_index = 0;
 	ring_info->ring_buffer->feature_bits.value = 1;
