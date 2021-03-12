@@ -285,12 +285,12 @@ static __init void hv_snp_get_smp_config(unsigned int early)
 }
 
 static u8 ap_start_input_arg[PAGE_SIZE] __bss_decrypted __aligned(PAGE_SIZE);
+static u8 ap_start_stack[PAGE_SIZE] __aligned(PAGE_SIZE);
 
 int hv_snp_boot_ap(int cpu, unsigned long start_ip)
 {
 	struct vmcb_save_area *vmsa = (struct vmcb_save_area *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
 	struct desc_ptr gdtr;
-	char *ap_stack = (char *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
 	u64 ret;
 	struct hv_enable_vp_vtl_input *enable_vtl_input;
 	struct hv_start_virtual_processor_input *start_vp_input;
@@ -354,7 +354,7 @@ int hv_snp_boot_ap(int cpu, unsigned long start_ip)
 	vmsa->g_pat = 0x0606060606060606ull;
 
 	vmsa->rip = (u64)start_ip;
-	vmsa->rsp = (u64)&ap_stack[PAGE_SIZE];
+	vmsa->rsp = (u64)&ap_start_stack[PAGE_SIZE];
 
 	vmsa->sev_feature_snp = 1;
 	vmsa->sev_feature_restrict_injection = 1;
