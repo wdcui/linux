@@ -290,10 +290,7 @@ unsigned long __head __startup_64(unsigned long physaddr,
 		vaddr_end = (unsigned long)__end_bss_decrypted;
 		for (; vaddr < vaddr_end; vaddr += PMD_SIZE) {
 			i = pmd_index(vaddr);
-			if (sev_vtom_enabled())
-				pmd[i] = sev_vtom_get_alias(pmd[i], false);
-			else
-				pmd[i] -= sme_get_me_mask();
+			pmd[i] -= sme_get_me_mask();
 			if (sev_snp_active())
 				for (va = vaddr; va < vaddr + PMD_SIZE; va += PAGE_SIZE)
 					sev_snp_change_page_state(__pa(va), false);

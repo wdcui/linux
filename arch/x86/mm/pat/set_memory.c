@@ -2006,17 +2006,6 @@ static int __set_memory_enc_dec(unsigned long addr, int numpages, bool enc)
 	cpa.mask_clr = enc ? __pgprot(0) : __pgprot(_PAGE_ENC);
 	cpa.pgd = init_mm.pgd;
 
-	if (sev_vtom_enabled()) {
-		if (enc) {
-			cpa.mask_set = __pgprot(0);
-			cpa.mask_clr = __pgprot(sev_vtom);
-		} else {
-			cpa.mask_set = __pgprot(sev_vtom);
-			cpa.mask_clr = __pgprot(0);
-		}
-		cpa.force_split = 1;
-	}
-
 	/* Must avoid aliasing mappings in the highmem code */
 	kmap_flush_unused();
 	vm_unmap_aliases();

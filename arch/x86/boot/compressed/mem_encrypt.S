@@ -49,8 +49,6 @@ SYM_FUNC_START(get_sev_encryption_bit)
 	rdmsr
 	bt	$MSR_AMD64_SEV_ENABLED_BIT, %eax	/* Check if SEV is active */
 	jnc	.Lno_sev
-	bt	$MSR_AMD64_SEV_VTOM_ENABLED_BIT, %eax /* Check if vTOM is enabled */
-	jc	.Lno_sev
 
 	movl	%ebx, %eax
 	andl	$0x3f, %eax		/* Return the encryption bit location */

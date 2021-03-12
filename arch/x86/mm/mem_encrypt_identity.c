@@ -543,13 +543,6 @@ void __init sme_enable(struct boot_params *bp)
 		/* Save SEV_STATUS to avoid reading MSR again */
 		sev_status = msr;
 
-		/* If vTOM is enabled, do not use sme_me_mask */
-		if (sev_status & MSR_AMD64_SEV_VTOM_ENABLED) {
-			BUG_ON(sev_vtom == 0);
-			me_mask = 0;
-			physical_mask = sev_vtom - 1;
-		}
-
 		/* SEV state cannot be controlled by a command line option */
 		sme_me_mask = me_mask;
 		sev_enabled = true;
