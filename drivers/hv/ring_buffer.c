@@ -195,13 +195,9 @@ int hv_ringbuffer_post_init(struct hv_ring_buffer_info *ring_info,
 {
 	int i;
 	struct page **pages_wraparound;
-	pgprot_t prot = PAGE_KERNEL_NOENC;
 
 	if (!hv_isolation_type_snp())
 		return 0;
-
-	if (sev_vtom_enabled())
-		pgprot_val(prot) = sev_vtom_get_alias(pgprot_val(prot), false);
 
 	pages_wraparound = kcalloc(page_cnt * 2 - 1, sizeof(struct page *),
 					GFP_KERNEL);
@@ -213,7 +209,7 @@ int hv_ringbuffer_post_init(struct hv_ring_buffer_info *ring_info,
 		pages_wraparound[i + 1] = &pages[i % (page_cnt - 1) + 1];
 
 	ring_info->ring_buffer = (struct hv_ring_buffer *)
-		vmap(pages_wraparound, page_cnt * 2 - 1, VM_MAP, prot);
+		vmap(pages_wraparound, page_cnt * 2 - 1, VM_MAP, PAGE_KERNEL_NOENC);
 
 	kfree(pages_wraparound);
 

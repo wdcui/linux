@@ -241,9 +241,6 @@ struct ghcb *sev_es_current_ghcb(void)
 
 	BUG_ON(GHCB_SEV_GHCB_RESP_CODE(gpa) != 0);
 
-	if (sev_vtom_enabled())
-		gpa = sev_vtom_get_alias(gpa, true);
-
 	if (gpa == __pa(&boot_ghcb_page))
 		return &boot_ghcb_page;
 
@@ -1195,12 +1192,10 @@ static enum es_result vc_handle_exitcode(struct es_em_ctxt *ctxt,
 	enum es_result result;
 
 	if (ghcb != sev_es_current_ghcb()) {
-		if (sev_snp_active()) {
+		if (sev_snp_active())
 			sev_snp_setup_ghcb(ghcb);
-		} else {
-			BUG_ON(sev_vtom_enabled());
+		else
 			sev_es_wr_ghcb_msr(__pa(ghcb));
-		}
 	}
 
 	switch (exit_code) {

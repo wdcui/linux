@@ -190,12 +190,10 @@ enum es_result sev_es_ghcb_hv_call(struct ghcb *ghcb,
 
 #ifndef __BOOT_COMPRESSED
 	if (ghcb != sev_es_current_ghcb()) {
-		if (sev_snp_active()) {
+		if (sev_snp_active())
 			sev_snp_setup_ghcb(ghcb);
-		} else {
-			BUG_ON(sev_vtom_enabled());
+		else
 			sev_es_wr_ghcb_msr(__pa(ghcb));
-		}
 	}
 #endif
 

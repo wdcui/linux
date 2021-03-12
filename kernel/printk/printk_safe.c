@@ -405,7 +405,7 @@ __printf(1, 0) int vprintk_func(const char *fmt, va_list args)
 		return vkdb_printf(KDB_MSGSRC_PRINTK, fmt, args);
 #endif
 
-	if (sev_vtom_enabled())
+	if (sev_snp_active())
 		return hv_sev_printf(fmt, args);
 
 	/*

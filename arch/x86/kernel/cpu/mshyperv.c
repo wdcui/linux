@@ -357,9 +357,7 @@ int hv_snp_boot_ap(int cpu, unsigned long start_ip)
 	vmsa->rsp = (u64)&ap_stack[PAGE_SIZE];
 
 	vmsa->sev_feature_snp = 1;
-	vmsa->sev_feature_vtom = 1;
 	vmsa->sev_feature_restrict_injection = 1;
-	vmsa->virtual_tom = sev_vtom;
 
 	rmp_adjust.as_uint64 = 0;
 	rmp_adjust.target_vmpl = 1;
@@ -438,9 +436,6 @@ static void __init ms_hyperv_init_platform(void)
 	pv_info.name = "Hyper-V";
 #endif
 
-	if (sev_snp_active() && sev_vtom_enabled() == false)
-		panic("Hyper-V SNP guest must have vTOM enabled!\n");
-
 	/*
 	 * Extract the features and hints
 	 */
@@ -512,12 +507,9 @@ static void __init ms_hyperv_init_platform(void)
 
 		if (sev_snp_active()) {
 			ms_hyperv.isolation_config_b |= HV_ISOLATION_TYPE_SNP;
-			if (ms_hyperv.shared_gpa_boundary_bits == 0)
-				ms_hyperv.shared_gpa_boundary_bits = (u32)__ffs(sev_vtom_get_alias(0, false));
+			BUG_ON(ms_hyperv.shared_gpa_boundary_active);
+			BUG_ON(ms_hyperv.shared_gpa_boundary_bits != 0);
 		}
-		ms_hyperv.shared_gpa_boundary =
-			(u64)1 << ms_hyperv.shared_gpa_boundary_bits;
-		BUG_ON(sev_snp_active() && ms_hyperv.shared_gpa_boundary != sev_vtom_get_alias(0, false));
 
 		pr_info("Hyper-V: Isolation Config: Group A 0x%x, Group B 0x%x\n",
 			ms_hyperv.isolation_config_a, ms_hyperv.isolation_config_b);

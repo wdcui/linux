@@ -274,10 +274,12 @@ static void __init __set_clr_pte_enc(pte_t *kpte, int level, bool enc)
 	clflush_cache_range(__va(pa), size);
 
 	/* Encrypt/decrypt the contents in-place */
-	if (enc)
-		sme_early_encrypt(pa, size);
-	else
-		sme_early_decrypt(pa, size);
+	if (!sev_snp_active()) {
+		if (enc)
+			sme_early_encrypt(pa, size);
+		else
+			sme_early_decrypt(pa, size);
+	}
 
 	/* Change the page encryption mask. */
 	new_pte = pfn_pte(pfn, new_prot);

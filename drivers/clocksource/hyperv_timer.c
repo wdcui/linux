@@ -431,7 +431,6 @@ static bool __init hv_init_tsc_clocksource(void)
 
 	hv_read_reference_counter = read_hv_clock_tsc;
 	phys_addr = virt_to_hvpfn(hv_get_tsc_page()) << PAGE_SHIFT;
-	BUG_ON(hv_isolation_type_snp() && !(phys_addr & sev_vtom));
 
 	/*
 	 * The Hyper-V TLFS specifies to preserve the value of reserved

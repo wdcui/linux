@@ -69,8 +69,6 @@ void sev_snp_setup_hv_doorbell_page(void)
 	enum es_result ret;
 
 	pa = __pa(hv_doorbell_page);
-	if (sev_vtom_enabled())
-		pa = sev_vtom_get_alias(pa, false);
 
 	local_irq_save(flags);
 	ghcb = sev_es_current_ghcb();
@@ -242,9 +240,6 @@ void sev_snp_setup_ghcb(struct ghcb *ghcb)
 	BUG_ON(!sev_snp_active());
 
 	ghcb_gpa = __pa(ghcb);
-	if (sev_vtom_enabled())
-		ghcb_gpa = sev_vtom_get_alias(ghcb_gpa, false);
-
 	sev_snp_wr_ghcb_msr(GHCB_GPA_REGISTER_REQ_MSR(ghcb_gpa >> PAGE_SHIFT));
 	VMGEXIT();
 
@@ -294,10 +289,6 @@ int vmgexit_snp_guest_request(unsigned long request, unsigned long response)
 
 	request_pa = __pa(request);
 	response_pa = __pa(response);
-	if (sev_vtom_enabled()) {
-		request_pa = sev_vtom_get_alias(request_pa, false);
-		response_pa = sev_vtom_get_alias(response_pa, false);
-	}
 
 	local_irq_save(flags);
 	ghcb = sev_es_current_ghcb();
