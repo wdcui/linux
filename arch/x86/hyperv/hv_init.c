@@ -84,7 +84,6 @@ static int hv_cpu_init(unsigned int cpu)
 	struct hv_vp_assist_page **hvp = &hv_vp_assist_page[smp_processor_id()];
 	void **input_arg;
 	struct page *pg;
-	void **ghcb_base;
 	void *page_addr;
 
 	/* hv_cpu_init() can be called with IRQs disabled from hv_resume() */
@@ -93,9 +92,8 @@ static int hv_cpu_init(unsigned int cpu)
 		return -ENOMEM;
 	page_addr = page_address(pg);
 
-	if (hv_isolation_type_snp() && !hv_isolation_has_paravisor()) {
+	if (hv_isolation_type_snp())
 		BUG_ON(set_memory_decrypted((unsigned long)page_addr, 1) != 0);
-	}
 
 	input_arg = (void **)this_cpu_ptr(hyperv_pcpu_input_arg);
 	*input_arg = page_addr;
@@ -130,7 +128,7 @@ static int hv_cpu_init(unsigned int cpu)
 	if (*hvp) {
 		u64 val;
 
-		if (hv_isolation_type_snp() && !hv_isolation_has_paravisor()) {
+		if (hv_isolation_type_snp()) {
 			BUG_ON(set_memory_decrypted((unsigned long)(*hvp), 1) != 0);
 			memset(*hvp, 0, PAGE_SIZE);
 		}
@@ -139,11 +137,6 @@ static int hv_cpu_init(unsigned int cpu)
 			HV_X64_MSR_VP_ASSIST_PAGE_ENABLE;
 
 		wrmsrl(HV_X64_MSR_VP_ASSIST_PAGE, val);
-	}
-
-	if (ms_hyperv.ghcb_base) {
-		ghcb_base = (void **)this_cpu_ptr(ms_hyperv.ghcb_base);
-		*ghcb_base = sev_es_current_ghcb();
 	}
 
 	return 0;
@@ -241,7 +234,6 @@ static int hv_cpu_die(unsigned int cpu)
 	unsigned long flags;
 	void **input_arg;
 	void *pg;
-	void **ghcb_va = NULL;
 
 	local_irq_save(flags);
 	input_arg = (void **)this_cpu_ptr(hyperv_pcpu_input_arg);
@@ -255,14 +247,9 @@ static int hv_cpu_die(unsigned int cpu)
 		*output_arg = NULL;
 	}
 
-	if (ms_hyperv.ghcb_base) {
-		ghcb_va = (void **)this_cpu_ptr(ms_hyperv.ghcb_base);
-		*ghcb_va = NULL;
-	}
-
 	local_irq_restore(flags);
 
-	if (hv_isolation_type_snp() && !hv_isolation_has_paravisor())
+	if (hv_isolation_type_snp())
 		BUG_ON(set_memory_encrypted((unsigned long)pg, 1) != 0);
 	free_pages((unsigned long)pg, hv_root_partition ? 1 : 0);
 
@@ -430,7 +417,6 @@ void __init hyperv_init(void)
 	u64 guest_id, required_msrs;
 	union hv_x64_msr_hypercall_contents hypercall_msr;
 	int cpuhp, i;
-	void **ghcb_base;
 
 	if (x86_hyper_type != X86_HYPER_MS_HYPERV)
 		return;
@@ -494,20 +480,8 @@ void __init hyperv_init(void)
 	if (hv_hypercall_pg == NULL)
 		goto clean_guest_os_id;
 
-	if (hv_isolation_type_snp() && !hv_isolation_has_paravisor())
+	if (hv_isolation_type_snp())
 		BUG_ON(set_memory_decrypted((unsigned long)hv_hypercall_pg, 1) != 0);
-
-	if (hv_isolation_type_snp()) {
-		ms_hyperv.ghcb_base = alloc_percpu(void *);
-		if (!ms_hyperv.ghcb_base)
-			goto clean_guest_os_id;
-
-		ghcb_base = (void **)this_cpu_ptr(ms_hyperv.ghcb_base);
-		*ghcb_base = sev_es_current_ghcb();
-
-		/* Hyper-V requires to write guest os id via ghcb in SNP IVM. */
-		hv_ghcb_msr_write(HV_X64_MSR_GUEST_OS_ID, guest_id);
-	}
 
 	rdmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
 	hypercall_msr.enable = 1;
@@ -596,7 +570,6 @@ void hyperv_cleanup(void)
 
 	/* Reset our OS id */
 	wrmsrl(HV_X64_MSR_GUEST_OS_ID, 0);
-	hv_ghcb_msr_write(HV_X64_MSR_GUEST_OS_ID, 0);
 
 	/*
 	 * Reset hypercall page reference before reset the page,
@@ -604,9 +577,6 @@ void hyperv_cleanup(void)
 	 * panic the kernel for using invalid hypercall page
 	 */
 	hv_hypercall_pg = NULL;
-
-	if (ms_hyperv.ghcb_base)
-		free_percpu(ms_hyperv.ghcb_base);
 
 	/* Reset the hypercall page */
 	hypercall_msr.as_uint64 = 0;

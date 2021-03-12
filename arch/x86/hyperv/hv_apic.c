@@ -328,7 +328,7 @@ void __init hv_apic_init(void)
 			apic->icr_write = hv_apic_icr_write;
 			apic->icr_read  = hv_apic_icr_read;
 		}
-		if (hv_isolation_type_snp() && !hv_isolation_has_paravisor())
+		if (hv_isolation_type_snp())
 			apic->wakeup_secondary_cpu = hv_snp_boot_ap;
 	}
 }
