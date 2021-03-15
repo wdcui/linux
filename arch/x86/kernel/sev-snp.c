@@ -72,3 +72,27 @@ void sev_snp_setup_ghcb(struct ghcb *ghcb)
 	sev_snp_wr_ghcb_msr(GHCB_GPA_REGISTER_REQ_VAL(ghcbmsr));
 }
 
+void sev_snp_change_page_state(u64 gpa, bool enc)
+{
+	u64 ghcbmsr;
+	u64 backup = sev_snp_rd_ghcb_msr();
+	unsigned long flags;
+	u8 state = enc ? SNP_PAGE_STATE_PRIVATE : SNP_PAGE_STATE_SHARED;
+	int ret;
+
+	local_irq_save(flags);
+	sev_snp_wr_ghcb_msr(GHCB_SNP_PAGE_STATE_CHANGE_REQ_MSR(gpa >> PAGE_SHIFT, state));
+	VMGEXIT();
+	ghcbmsr = sev_snp_rd_ghcb_msr();
+	sev_snp_wr_ghcb_msr(backup);
+	local_irq_restore(flags);
+
+	if (ghcbmsr != GHCB_SNP_PAGE_STATE_CHANGE_RESP)
+		panic("Failed to change the page state (gpa=%llx, enc=%d)\n", gpa, enc);
+
+	if (enc) {
+		PVALIDATE(__va(gpa), 0, 1, ret);
+		if (ret != 0)
+			panic("Failed to PVALIDATE GPA=%llx\n", gpa);
+	}
+}

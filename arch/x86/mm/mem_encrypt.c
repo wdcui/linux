@@ -29,6 +29,7 @@
 #include <asm/processor-flags.h>
 #include <asm/msr.h>
 #include <asm/cmdline.h>
+#include <asm/sev-es.h>
 
 #include "mm_internal.h"
 
@@ -232,7 +233,7 @@ void __init sev_setup_arch(void)
 static void __init __set_clr_pte_enc(pte_t *kpte, int level, bool enc)
 {
 	pgprot_t old_prot, new_prot;
-	unsigned long pfn, pa, size;
+	unsigned long pfn, pa, size, gpa;
 	pte_t new_pte;
 
 	switch (level) {
@@ -273,14 +274,21 @@ static void __init __set_clr_pte_enc(pte_t *kpte, int level, bool enc)
 	clflush_cache_range(__va(pa), size);
 
 	/* Encrypt/decrypt the contents in-place */
-	if (enc)
-		sme_early_encrypt(pa, size);
-	else
-		sme_early_decrypt(pa, size);
+	if (!sev_snp_active()) {
+		if (enc)
+			sme_early_encrypt(pa, size);
+		else
+			sme_early_decrypt(pa, size);
+	}
 
 	/* Change the page encryption mask. */
 	new_pte = pfn_pte(pfn, new_prot);
 	set_pte_atomic(kpte, new_pte);
+
+	/* Change the RMP configuration for SNP */
+	if (sev_snp_active())
+		for (gpa = pa; gpa < pa + size; gpa += PAGE_SIZE)
+			sev_snp_change_page_state(gpa, enc);
 }
 
 static int __init early_set_memory_enc_dec(unsigned long vaddr,

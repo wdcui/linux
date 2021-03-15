@@ -27,6 +27,7 @@
 #include <asm/proto.h>
 #include <asm/memtype.h>
 #include <asm/set_memory.h>
+#include <asm/sev-es.h>
 
 #include "../mm_internal.h"
 
@@ -1551,6 +1552,12 @@ repeat:
 		if (pte_val(old_pte) != pte_val(new_pte)) {
 			set_pte_atomic(kpte, new_pte);
 			cpa->flags |= CPA_FLUSHTLB;
+			if (sev_snp_active()) {
+				if (pgprot_val(cpa->mask_set) & _PAGE_ENC)
+					sev_snp_change_page_state(pfn << PAGE_SHIFT, true);
+				else if (pgprot_val(cpa->mask_clr) & _PAGE_ENC)
+					sev_snp_change_page_state(pfn << PAGE_SHIFT, false);
+			}
 		}
 		cpa->numpages = 1;
 		return 0;
@@ -1991,6 +1998,7 @@ static int __set_memory_enc_dec(unsigned long addr, int numpages, bool enc)
 	cpa.mask_set = enc ? __pgprot(_PAGE_ENC) : __pgprot(0);
 	cpa.mask_clr = enc ? __pgprot(0) : __pgprot(_PAGE_ENC);
 	cpa.pgd = init_mm.pgd;
+	cpa.force_split = 1;
 
 	/* Must avoid aliasing mappings in the highmem code */
 	kmap_flush_unused();
