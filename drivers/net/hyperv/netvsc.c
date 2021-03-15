@@ -119,21 +119,8 @@ static void free_netvsc_device(struct rcu_head *head)
 	int i;
 
 	kfree(nvdev->extension);
-
-	if (nvdev->recv_original_buf) {
-		iounmap(nvdev->recv_buf);
-		vfree(nvdev->recv_original_buf);
-	} else {
-		vfree(nvdev->recv_buf);
-	}
-
-	if (nvdev->send_original_buf) {
-		iounmap(nvdev->send_buf);
-		vfree(nvdev->send_original_buf);
-	} else {
-		vfree(nvdev->send_buf);
-	}
-
+	vfree(nvdev->recv_buf);
+	vfree(nvdev->send_buf);
 	kfree(nvdev->send_section_map);
 
 	for (i = 0; i < VRSS_CHANNEL_MAX; i++) {
@@ -254,18 +241,12 @@ static void netvsc_teardown_recv_gpadl(struct hv_device *device,
 				       struct netvsc_device *net_device,
 				       struct net_device *ndev)
 {
-	void *recv_buf;
 	int ret;
 
 	if (net_device->recv_buf_gpadl_handle) {
-		if (net_device->recv_original_buf)
-			recv_buf = net_device->recv_original_buf;
-		else
-			recv_buf = net_device->recv_buf;
-
 		ret = vmbus_teardown_gpadl(device->channel,
 					   net_device->recv_buf_gpadl_handle,
-					   recv_buf, net_device->recv_buf_size);
+					   net_device->recv_buf, net_device->recv_buf_size);
 
 		/* If we failed here, we might as well return and have a leak
 		 * rather than continue and a bugchk
@@ -283,18 +264,12 @@ static void netvsc_teardown_send_gpadl(struct hv_device *device,
 				       struct netvsc_device *net_device,
 				       struct net_device *ndev)
 {
-	void *send_buf;
 	int ret;
 
 	if (net_device->send_buf_gpadl_handle) {
-		if (net_device->send_original_buf)
-			send_buf = net_device->send_original_buf;
-		else
-			send_buf = net_device->send_buf;
-
 		ret = vmbus_teardown_gpadl(device->channel,
 					   net_device->send_buf_gpadl_handle,
-					   send_buf, net_device->send_buf_size);
+					   net_device->send_buf, net_device->send_buf_size);
 
 		/* If we failed here, we might as well return and have a leak
 		 * rather than continue and a bugchk
