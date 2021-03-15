@@ -221,6 +221,13 @@ SYM_INNER_LABEL(secondary_startup_64_no_verify, SYM_L_GLOBAL)
 	call	early_setup_idt
 	popq	%rsi
 
+#ifdef CONFIG_AMD_MEM_ENCRYPT
+	/* Setup GHCB for SEV */
+	pushq	%rsi
+	call	sev_es_setup_ghcb
+	popq	%rsi
+#endif
+
 	/* Check if nx is implemented */
 	movl	$0x80000001, %eax
 	cpuid
