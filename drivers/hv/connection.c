@@ -315,20 +315,6 @@ void vmbus_disconnect(void)
 	}
 
 	if (hv_isolation_type_snp()) {
-		if (vmbus_connection.monitor_pages_va[0]) {
-			vunmap(vmbus_connection.monitor_pages[0]);
-			vmbus_connection.monitor_pages[0]
-				= vmbus_connection.monitor_pages_va[0];
-			vmbus_connection.monitor_pages_va[0] = NULL;
-		}
-
-		if (vmbus_connection.monitor_pages_va[1]) {
-			vunmap(vmbus_connection.monitor_pages[1]);
-			vmbus_connection.monitor_pages[1]
-				= vmbus_connection.monitor_pages_va[1];
-			vmbus_connection.monitor_pages_va[1] = NULL;
-		}
-
 		BUG_ON(set_memory_encrypted((unsigned long)vmbus_connection.monitor_pages[0], 1));
 		BUG_ON(set_memory_encrypted((unsigned long)vmbus_connection.monitor_pages[1], 1));
 	}

@@ -39,8 +39,6 @@ struct hv_bounce_page_list {
 	u32 len;
 	unsigned long va;
 	unsigned long bounce_va;
-	unsigned long bounce_original_va;
-	unsigned long bounce_extra_pfn;
 	unsigned long last_used_jiff;
 };
 
@@ -181,8 +179,6 @@ static int hv_bounce_page_list_alloc(struct vmbus_channel *channel, u32 count)
 		if (hv_isolation_type_snp()) {
 			BUG_ON(set_memory_decrypted(va, 1) != 0);
 			memset((void *)va, 0, PAGE_SIZE);
-			bounce_page->bounce_extra_pfn = virt_to_hvpfn((void *)va);
-			bounce_page->bounce_original_va = va;
 			bounce_page->bounce_va = va;
 		} else {
 			bounce_page->bounce_va = va;
@@ -460,13 +456,8 @@ static struct hv_bounce_pkt *hv_bounce_resources_assign(
 			list_add_tail(&bounce_page->link,
 				      &bounce_pkt->bounce_page_head);
 
-			if (hv_isolation_type_snp()) {
-				range[r].pfn_array[p] =
-					bounce_page->bounce_extra_pfn;
-			} else {
-				range[r].pfn_array[p] = virt_to_hvpfn(
-					(void *)bounce_page->bounce_va);
-			}
+			range[r].pfn_array[p] = virt_to_hvpfn(
+				(void *)bounce_page->bounce_va);
 			offset = 0;
 			len -= copy_len;
 		}
