@@ -187,4 +187,6 @@ enum es_result sev_es_ghcb_hv_call(struct ghcb *ghcb,
 				   u64 exit_code, u64 exit_info_1,
 				   u64 exit_info_2);
 
+int vmgexit_snp_guest_request(unsigned long request, unsigned long response);
+
 #endif
