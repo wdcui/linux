@@ -12,6 +12,8 @@
 #include <linux/irq_work.h>
 #include <linux/printk.h>
 #include <linux/kprobes.h>
+#include <linux/version.h>
+#include <asm/mshyperv.h>
 
 #include "internal.h"
 
@@ -359,6 +361,42 @@ void __printk_safe_exit(void)
 	this_cpu_dec(printk_context);
 }
 
+static DEFINE_SPINLOCK(printk_lock);
+
+static int hv_sev_printf(const char *fmt, va_list ap)
+{
+	char buf[1024];
+	int len;
+	int idx;
+	int left;
+	unsigned long flags;
+	u32 orig_low, orig_high;
+	u32 low, high;
+
+	len = vsnprintf(buf, sizeof(buf), fmt, ap);
+
+	local_irq_save(flags);
+	spin_lock(&printk_lock);
+	asm volatile ("rdmsr" : "=a" (orig_low), "=d" (orig_high) : "c" (0xc0010130));
+	for (idx = 0; idx < len; idx += 6) {
+		left = len - idx;
+		if (left > 6) left = 6;
+		low = 0xf03;
+		high = 0;
+		memcpy((char *)&low+2, &buf[idx], left == 1 ? 1 : 2);
+		if (left > 2)
+			memcpy((char *)&high, &buf[idx+2], left-2);
+		asm volatile ("wrmsr\n\r"
+				"rep; vmmcall\n\r"
+				:: "c" (0xc0010130), "a" (low), "d" (high));
+	}
+	asm volatile ("wrmsr" :: "c" (0xc0010130), "a" (orig_low), "d" (orig_high));
+	spin_unlock(&printk_lock);
+	local_irq_restore(flags);
+
+	return len;
+}
+
 __printf(1, 0) int vprintk_func(const char *fmt, va_list args)
 {
 #ifdef CONFIG_KGDB_KDB
@@ -366,6 +404,9 @@ __printf(1, 0) int vprintk_func(const char *fmt, va_list args)
 	if (unlikely(kdb_trap_printk && kdb_printf_cpu < 0))
 		return vkdb_printf(KDB_MSGSRC_PRINTK, fmt, args);
 #endif
+
+	if (sev_snp_active())
+		return hv_sev_printf(fmt, args);
 
 	/*
 	 * Try to use the main logbuf even in NMI. But avoid calling console
