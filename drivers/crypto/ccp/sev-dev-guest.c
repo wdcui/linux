@@ -363,7 +363,7 @@ static struct sev_guest_crypto *init_crypto(void)
 	 * TODO: find the VMPCK and message sequence number through ACPI table.
 	 * Currently, we map the secret page directly to get the VMPCK to test the driver flow.
 	 */
-	secret = (struct secret_page *)memremap(0x801000, PAGE_SIZE, MEMREMAP_WB);
+	secret = (struct secret_page *)ioremap_encrypted(0x801000, PAGE_SIZE);
 	if (!secret) {
 		pr_err("failed to remap 0x801000.\n");
 		return NULL;
