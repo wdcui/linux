@@ -458,16 +458,21 @@ int vmbus_post_msg(void *buffer, size_t buflen, bool can_sleep)
 void vmbus_set_event(struct vmbus_channel *channel)
 {
 	u32 child_relid = channel->offermsg.child_relid;
+	u64 *input_arg = *(u64 **)this_cpu_ptr(hyperv_pcpu_input_arg);
+	unsigned long flags;
 
 	if (!channel->is_dedicated_interrupt)
 		vmbus_send_interrupt(child_relid);
 
 	++channel->sig_events;
 
-	if (hv_isolation_type_snp())
-		hv_ghcb_hypercall(HVCALL_SIGNAL_EVENT, &channel->sig_event,
-				NULL, sizeof(u64));
-	else
+	if (hv_isolation_type_snp()) {
+		local_irq_save(flags);
+		input_arg[0] = channel->sig_event;
+		hv_do_hypercall(HVCALL_SIGNAL_EVENT, input_arg, NULL);
+		local_irq_restore(flags);
+	} else {
 		hv_do_fast_hypercall8(HVCALL_SIGNAL_EVENT, channel->sig_event);
+	}
 }
 EXPORT_SYMBOL_GPL(vmbus_set_event);
