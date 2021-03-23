@@ -208,7 +208,7 @@ void __init swiotlb_update_mem_attributes(void)
 
 	vaddr = phys_to_virt(io_tlb_start);
 	bytes = PAGE_ALIGN(io_tlb_nslabs << IO_TLB_SHIFT);
-	set_memory_decrypted((unsigned long)vaddr, bytes >> PAGE_SHIFT);
+	BUG_ON(set_memory_decrypted((unsigned long)vaddr, bytes >> PAGE_SHIFT) != 0);
 	memset(vaddr, 0, bytes);
 }
 
