@@ -210,30 +210,38 @@ static inline void sev_es_wr_ghcb_msr(u64 val)
 	native_wrmsr(MSR_AMD64_SEV_ES_GHCB, low, high);
 }
 
+static inline u64 vmgexit_ghcb_msr(u64 val) {
+	u64 old;
+	unsigned long flags;
+
+	local_irq_save(flags);
+	old = sev_es_rd_ghcb_msr();
+	sev_es_wr_ghcb_msr(val);
+	VMGEXIT();
+	val = sev_es_rd_ghcb_msr();
+	sev_es_wr_ghcb_msr(old);
+	local_irq_restore(flags);
+
+	return val;
+}
+
 /* Provides sev_es_terminate() */
 #include "sev-common-shared.c"
 
 void sev_snp_register_ghcb(unsigned long paddr)
 {
 	u64 pfn = paddr >> PAGE_SHIFT;
-	u64 old, val;
-
-	/* save the old GHCB MSR */
-	old = sev_es_rd_ghcb_msr();
+	u64 val;
 
 	/* Issue VMGEXIT */
-	sev_es_wr_ghcb_msr(GHCB_REGISTER_GPA_REQ_VAL(pfn));
-	VMGEXIT();
-
-	val = sev_es_rd_ghcb_msr();
+	val = vmgexit_ghcb_msr(GHCB_REGISTER_GPA_REQ_VAL(pfn));
 
 	/* If the response GPA is not ours then abort the guest */
 	if ((GHCB_SEV_GHCB_RESP_CODE(val) != GHCB_REGISTER_GPA_RESP) ||
 	    (GHCB_REGISTER_GPA_RESP_VAL(val) != pfn))
 		sev_es_terminate(GHCB_SEV_ES_REASON_GENERAL_REQUEST);
 
-	/* Restore the GHCB MSR value */
-	sev_es_wr_ghcb_msr(old);
+	sev_es_wr_ghcb_msr(pfn << PAGE_SHIFT);
 }
 
 void sev_snp_issue_pvalidate(unsigned long vaddr, unsigned int npages, bool validate)
@@ -272,16 +280,13 @@ e_fail:
 	sev_es_terminate(GHCB_SEV_ES_REASON_GENERAL_REQUEST);
 }
 
-static void __init early_snp_set_page_state(unsigned long paddr, unsigned int npages, int op)
+static void early_snp_set_page_state(unsigned long paddr, unsigned int npages, int op)
 {
 	unsigned long paddr_end, paddr_next;
-	u64 old, val;
+	u64 val;
 
 	paddr = paddr & PAGE_MASK;
 	paddr_end = paddr + (npages << PAGE_SHIFT);
-
-	/* save the old GHCB MSR */
-	old = sev_es_rd_ghcb_msr();
 
 	for (; paddr < paddr_end; paddr = paddr_next) {
 
@@ -290,10 +295,7 @@ static void __init early_snp_set_page_state(unsigned long paddr, unsigned int np
 		 * protocol VMGEXIT because in early boot we may not have the full GHCB setup
 		 * yet.
 		 */
-		sev_es_wr_ghcb_msr(GHCB_SNP_PAGE_STATE_REQ_GFN(paddr >> PAGE_SHIFT, op));
-		VMGEXIT();
-
-		val = sev_es_rd_ghcb_msr();
+		val = vmgexit_ghcb_msr(GHCB_SNP_PAGE_STATE_REQ_GFN(paddr >> PAGE_SHIFT, op));
 
 		/* Read the response, if the page state change failed then terminate the guest. */
 		if (GHCB_SEV_GHCB_RESP_CODE(val) != GHCB_SNP_PAGE_STATE_CHANGE_RESP)
@@ -313,9 +315,6 @@ static void __init early_snp_set_page_state(unsigned long paddr, unsigned int np
 
 		paddr_next = paddr + PAGE_SIZE;
 	}
-
-	/* Restore the GHCB MSR value */
-	sev_es_wr_ghcb_msr(old);
 }
 
 void __init early_snp_set_memory_private(unsigned long vaddr, unsigned long paddr,
@@ -424,21 +423,21 @@ e_fail:
 	sev_es_terminate(GHCB_SEV_ES_REASON_GENERAL_REQUEST);
 }
 
-int snp_set_memory_shared(unsigned long vaddr, unsigned int npages)
+int snp_set_memory_shared(unsigned long vaddr, unsigned long paddr, unsigned int npages)
 {
 	/* Invalidate the memory before changing the page state in the RMP table. */
 	sev_snp_issue_pvalidate(vaddr, npages, false);
 
 	/* Change the page state in the RMP table. */
-	snp_set_page_state(__pa(vaddr), npages, SNP_PAGE_STATE_SHARED);
+	early_snp_set_page_state(paddr, npages, SNP_PAGE_STATE_SHARED);
 
 	return 0;
 }
 
-int snp_set_memory_private(unsigned long vaddr, unsigned int npages)
+int snp_set_memory_private(unsigned long vaddr, unsigned long paddr, unsigned int npages)
 {
 	/* Change the page state in the RMP table. */
-	snp_set_page_state(__pa(vaddr), npages, SNP_PAGE_STATE_PRIVATE);
+	early_snp_set_page_state(paddr, npages, SNP_PAGE_STATE_PRIVATE);
 
 	/* Validate the memory after the memory is made private in the RMP table. */
 	sev_snp_issue_pvalidate(vaddr, npages, true);

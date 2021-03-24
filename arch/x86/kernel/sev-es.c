@@ -174,6 +174,21 @@ void noinstr __sev_es_ist_exit(void)
 	this_cpu_write(cpu_tss_rw.x86_tss.ist[IST_INDEX_VC], *(unsigned long *)ist);
 }
 
+static inline u64 sev_es_rd_ghcb_msr(void)
+{
+	return __rdmsr(MSR_AMD64_SEV_ES_GHCB);
+}
+
+static __always_inline void sev_es_wr_ghcb_msr(u64 val)
+{
+	u32 low, high;
+
+	low  = (u32)(val);
+	high = (u32)(val >> 32);
+
+	native_wrmsr(MSR_AMD64_SEV_ES_GHCB, low, high);
+}
+
 struct ghcb *sev_es_get_ghcb(struct ghcb_state *state)
 {
 	struct sev_es_runtime_data *data;
@@ -233,21 +248,6 @@ void sev_es_put_ghcb(struct ghcb_state *state)
 
 /* Needed in vc_early_forward_exception */
 void do_early_exception(struct pt_regs *regs, int trapnr);
-
-static inline u64 sev_es_rd_ghcb_msr(void)
-{
-	return __rdmsr(MSR_AMD64_SEV_ES_GHCB);
-}
-
-static __always_inline void sev_es_wr_ghcb_msr(u64 val)
-{
-	u32 low, high;
-
-	low  = (u32)(val);
-	high = (u32)(val >> 32);
-
-	native_wrmsr(MSR_AMD64_SEV_ES_GHCB, low, high);
-}
 
 static int vc_fetch_insn_kernel(struct es_em_ctxt *ctxt,
 				unsigned char *buffer)
@@ -450,7 +450,7 @@ void noinstr __sev_es_nmi_complete(void)
 	ghcb_set_sw_exit_info_1(ghcb, 0);
 	ghcb_set_sw_exit_info_2(ghcb, 0);
 
-	sev_es_wr_ghcb_msr(__pa_nodebug(ghcb));
+	BUG_ON(sev_es_rd_ghcb_msr() != __pa_nodebug(ghcb));
 	VMGEXIT();
 
 	sev_es_put_ghcb(&state);
@@ -472,7 +472,7 @@ static u64 get_jump_table_addr(void)
 	ghcb_set_sw_exit_info_1(ghcb, SVM_VMGEXIT_GET_AP_JUMP_TABLE);
 	ghcb_set_sw_exit_info_2(ghcb, 0);
 
-	sev_es_wr_ghcb_msr(__pa(ghcb));
+	BUG_ON(sev_es_rd_ghcb_msr() != __pa(ghcb));
 	VMGEXIT();
 
 	if (ghcb_sw_exit_info_1_is_valid(ghcb) &&
@@ -645,7 +645,7 @@ static void sev_es_ap_hlt_loop(void)
 		ghcb_set_sw_exit_info_1(ghcb, 0);
 		ghcb_set_sw_exit_info_2(ghcb, 0);
 
-		sev_es_wr_ghcb_msr(__pa(ghcb));
+		BUG_ON(sev_es_rd_ghcb_msr() != __pa(ghcb));
 		VMGEXIT();
 
 		/* Wakeup signal? */
