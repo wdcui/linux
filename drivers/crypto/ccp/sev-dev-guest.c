@@ -260,7 +260,7 @@ static int ioctl_snp_guest_request(struct sev_snp_guest_request *input)
 
 	ret = snp_guest_request(input->msg_version, input->req_msg_type, req_buf, req_len,
 							input->rsp_msg_type, rsp_buf, &rsp_len);
-	if (!ret) {
+	if (ret) {
 		input->error = ret;
 		goto e_free;
 	}
