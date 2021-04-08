@@ -423,6 +423,8 @@ e_fail:
 	sev_es_terminate(GHCB_SEV_ES_REASON_GENERAL_REQUEST);
 }
 
+int hv_mark_gpa_visibility(u16 count, const u64 pfn[], u32 visibility);
+
 int snp_set_memory_shared(unsigned long vaddr, unsigned long paddr, unsigned int npages)
 {
 	/* Invalidate the memory before changing the page state in the RMP table. */
@@ -436,8 +438,15 @@ int snp_set_memory_shared(unsigned long vaddr, unsigned long paddr, unsigned int
 
 int snp_set_memory_private(unsigned long vaddr, unsigned long paddr, unsigned int npages)
 {
+	unsigned int i;
+	u64 pfn = paddr >> PAGE_SHIFT;
 	/* Change the page state in the RMP table. */
-	early_snp_set_page_state(paddr, npages, SNP_PAGE_STATE_PRIVATE);
+	//early_snp_set_page_state(paddr, npages, SNP_PAGE_STATE_PRIVATE);
+
+	for (i = 0; i < npages; i ++) {
+		hv_mark_gpa_visibility(1, &pfn, 0);
+		pfn++;
+	}
 
 	/* Validate the memory after the memory is made private in the RMP table. */
 	sev_snp_issue_pvalidate(vaddr, npages, true);
