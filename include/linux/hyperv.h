@@ -1024,6 +1024,7 @@ struct vmbus_channel {
 
 	/* The free list of bounce pages is LRU sorted based on last used */
 	struct list_head bounce_page_free_head;
+	u32 bounce_page_free_count;
 	u32 bounce_page_alloc_count;
 	struct delayed_work bounce_page_list_maintain;
 
