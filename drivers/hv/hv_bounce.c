@@ -17,9 +17,9 @@
 #define BP_LIST_MAINTENANCE_FREQ (30 * HZ)
 #define BP_MIN_TIME_IN_FREE_LIST (30 * HZ)
 #define IS_BP_MAINTENANCE_TASK_NEEDED(channel) \
-	(channel->bounce_page_free_count > \
-	 channel->min_bounce_resource_count)
-
+	(channel->bounce_page_alloc_count > \
+	 channel->min_bounce_resource_count && \
+	 !list_empty(&channel->bounce_page_free_head))
 #define BP_QUEUE_MAINTENANCE_WORK(channel) \
 	queue_delayed_work(system_unbound_wq,		\
 			   &channel->bounce_page_list_maintain, \
@@ -192,7 +192,6 @@ static int hv_bounce_page_list_alloc(struct vmbus_channel *channel, u32 count)
 
 	spin_lock_irqsave(&channel->bp_lock, flags);
 	list_splice_tail(&head, &channel->bounce_page_free_head);
-	channel->bounce_page_free_count += count;
 	channel->bounce_page_alloc_count += count;
 	queue_work = IS_BP_MAINTENANCE_TASK_NEEDED(channel);
 	spin_unlock_irqrestore(&channel->bp_lock, flags);
@@ -231,7 +230,6 @@ static void hv_bounce_page_list_release(struct vmbus_channel *channel,
 		/* Maintain LRU */
 		list_add_tail(&bounce_page->link,
 			      &channel->bounce_page_free_head);
-		channel->bounce_page_free_count++;
 	}
 
 	queue_work = IS_BP_MAINTENANCE_TASK_NEEDED(channel);
@@ -273,7 +271,6 @@ static void hv_bounce_page_list_maintain(struct work_struct *work)
 			break;
 		list_del(&bounce_page->link);
 		list_add_tail(&bounce_page->link, &head_to_free);
-		channel->bounce_page_free_count--;
 		channel->bounce_page_alloc_count--;
 	}
 
@@ -283,8 +280,6 @@ static void hv_bounce_page_list_maintain(struct work_struct *work)
 		hv_bounce_page_list_free(channel, &head_to_free);
 	if (queue_work)
 		BP_QUEUE_MAINTENANCE_WORK(channel);
-	else if (channel->bounce_page_free_count * 2 < channel->min_bounce_resource_count)
-		BUG_ON(hv_bounce_page_list_alloc(channel, channel->min_bounce_resource_count >> 1) < 0);
 }
 
 /*
@@ -306,7 +301,6 @@ retry:
 					       struct hv_bounce_page_list,
 					       link);
 		list_del(&bounce_page->link);
-		channel->bounce_page_free_count--;
 	}
 	spin_unlock_irqrestore(&channel->bp_lock, flags);
 
