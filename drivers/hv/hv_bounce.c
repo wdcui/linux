@@ -308,7 +308,7 @@ retry:
 		return bounce_page;
 
 	if (hv_isolation_type_snp() && in_interrupt()) {
-		pr_warn_once("Reservse page is not enough.\n");
+		pr_warn("Reservse page is not enough.\n");
 		return NULL;
 	}
 
