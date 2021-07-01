@@ -1027,6 +1027,7 @@ struct vmbus_channel {
 	u32 bounce_page_free_count;
 	u32 bounce_page_alloc_count;
 	struct delayed_work bounce_page_list_maintain;
+	struct work_struct bounce_page_list_allocate;
 
 	struct kmem_cache *bounce_page_cache;
 	struct kmem_cache *bounce_pkt_cache;

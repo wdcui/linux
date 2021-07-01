@@ -16,14 +16,22 @@
 /* BP == Bounce Pages here */
 #define BP_LIST_MAINTENANCE_FREQ (30 * HZ)
 #define BP_MIN_TIME_IN_FREE_LIST (30 * HZ)
-#define IS_BP_MAINTENANCE_TASK_NEEDED(channel) \
-	(channel->bounce_page_free_count > \
-	 channel->min_bounce_resource_count)
+/*#define IS_BP_MAINTENANCE_TASK_NEEDED(channel) \*/
+	/*(channel->bounce_page_free_count > \*/
+	 /*channel->min_bounce_resource_count)*/
 
+#define IS_BP_MAINTENANCE_TASK_NEEDED(channel) 0
 #define BP_QUEUE_MAINTENANCE_WORK(channel) \
 	queue_delayed_work(system_unbound_wq,		\
 			   &channel->bounce_page_list_maintain, \
 			   BP_LIST_MAINTENANCE_FREQ)
+
+#define IS_BP_ALLOCATION_TASK_NEEDED(channel) \
+	(channel->bounce_page_free_count < channel->min_bounce_resource_count << 3)
+
+#define BP_QUEUE_ALLOCATION_WORK(channel) \
+	queue_work(system_unbound_wq,		\
+		   &channel->bounce_page_list_allocate)
 
 #define hv_copy_to_bounce(bounce_pkt) \
 		hv_copy_to_from_bounce(bounce_pkt, true)
@@ -164,15 +172,21 @@ static int hv_bounce_page_list_alloc(struct vmbus_channel *channel, u32 count)
 	int ret = -ENOSPC;
 	unsigned long va = 0;
 
+	if (!in_interrupt()) {
+		flags = __GFP_ZERO | GFP_KERNEL;
+	} else {
+		flags = __GFP_ZERO | GFP_ATOMIC;
+	}
+
 	INIT_LIST_HEAD(&head);
 	for (p = 0; p < count; p++) {
 		struct hv_bounce_page_list *bounce_page;
 
-		va = __get_free_page(__GFP_ZERO | GFP_ATOMIC);
+		va = __get_free_page(flags);
 		if (unlikely(!va))
 			goto err_free;
 		bounce_page = kmem_cache_alloc(channel->bounce_page_cache,
-					       __GFP_ZERO | GFP_ATOMIC);
+					       flags);
 		if (unlikely(!bounce_page))
 			goto err_free;
 
@@ -283,10 +297,24 @@ static void hv_bounce_page_list_maintain(struct work_struct *work)
 		hv_bounce_page_list_free(channel, &head_to_free);
 	if (queue_work)
 		BP_QUEUE_MAINTENANCE_WORK(channel);
-	else if (channel->bounce_page_free_count * 2 < channel->min_bounce_resource_count)
-		BUG_ON(hv_bounce_page_list_alloc(channel, channel->min_bounce_resource_count >> 1) < 0);
 }
 
+static void hv_bounce_page_list_allocate(struct work_struct *work)
+{
+	struct vmbus_channel *channel;
+	int ret;
+
+	channel = container_of(work, struct vmbus_channel,
+			       bounce_page_list_allocate);
+	/*pr_info("Bounce alloc delayed work is triggered\n");*/
+	while (IS_BP_ALLOCATION_TASK_NEEDED(channel)) {
+		ret = hv_bounce_page_list_alloc(channel, channel->min_bounce_resource_count << 3);
+		if (ret) {
+			pr_warn("Page alloc faield %d\n", ret);
+			break;
+		}
+	}
+}
 /*
  * Assigns a free bounce page from the channel, if one is available. Else,
  * allocates a bunch of bounce pages into the channel and returns one. Use
@@ -298,8 +326,13 @@ static struct hv_bounce_page_list *hv_bounce_page_assign(
 	struct hv_bounce_page_list *bounce_page = NULL;
 	unsigned long flags;
 	int ret;
+	bool queue_work_needed = false;
 
-retry:	
+	queue_work_needed = IS_BP_ALLOCATION_TASK_NEEDED(channel);
+	if (hv_isolation_type_snp() && queue_work_needed)
+		BP_QUEUE_ALLOCATION_WORK(channel);
+
+retry:
 	spin_lock_irqsave(&channel->bp_lock, flags);
 	if (!list_empty(&channel->bounce_page_free_head)) {
 		bounce_page = list_first_entry(&channel->bounce_page_free_head,
@@ -314,7 +347,7 @@ retry:
 		return bounce_page;
 
 	if (hv_isolation_type_snp() && in_interrupt()) {
-		pr_warn("Reservse page is not enough.\n");
+		pr_warn_ratelimited("Reservse page is not enough.\n");
 		return NULL;
 	}
 
@@ -551,6 +584,9 @@ int hv_init_channel_ivm(struct vmbus_channel *channel)
 	INIT_DELAYED_WORK(&channel->bounce_page_list_maintain,
 			  hv_bounce_page_list_maintain);
 
+	INIT_WORK(&channel->bounce_page_list_allocate,
+			  hv_bounce_page_list_allocate);
+
 	INIT_LIST_HEAD(&channel->bounce_page_free_head);
 	INIT_LIST_HEAD(&channel->bounce_pkt_free_list_head);
 
@@ -570,6 +606,7 @@ void hv_free_channel_ivm(struct vmbus_channel *channel)
 		return;
 
 	cancel_delayed_work_sync(&channel->bounce_page_list_maintain);
+	cancel_work_sync(&channel->bounce_page_list_allocate);
 
 	hv_bounce_pkt_list_free(channel, &channel->bounce_pkt_free_list_head);
 	hv_bounce_page_list_free(channel, &channel->bounce_page_free_head);
