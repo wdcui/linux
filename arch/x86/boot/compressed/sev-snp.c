@@ -9,6 +9,7 @@
 #include "misc.h"
 #include "error.h"
 
+#include <asm/e820/types.h>
 #include <asm/msr-index.h>
 #include <asm/sev-snp.h>
 #include <asm/sev-es.h>
@@ -138,4 +139,42 @@ void sev_snp_register_ghcb(unsigned long paddr)
 
 	/* Restore the GHCB MSR value */
 	sev_es_wr_ghcb_msr(old);
+}
+
+static void extend_e820_on_demand(struct boot_e820_entry *e820_entry,
+				  u64 needed_ram_end)
+{
+	if (!e820_entry) {
+		return;
+	}
+	unsigned long end = e820_entry->addr + e820_entry->size;
+	if (needed_ram_end > end && e820_entry->type == E820_TYPE_RAM) {
+		for (u64 paddr = end; paddr < needed_ram_end;
+		     paddr += PAGE_SIZE) {
+			sev_snp_issue_pvalidate_page(paddr, true);
+		}
+		e820_entry->size = needed_ram_end - e820_entry->addr;
+	}
+}
+
+asmlinkage __visible void pvalidate_for_startup_64(void *rmode)
+{
+	if (!sev_snp_enabled()) {
+		return;
+	}
+	struct boot_params *bp = (struct boot_params *)rmode;
+	struct boot_e820_entry *e820_entry;
+	u64 needed_end, init_end = bp->hdr.pref_address + bp->hdr.init_size;
+	u8 nr_entries = bp->e820_entries;
+	for (u8 i = 0; i < nr_entries; ++i) {
+		// Pvalidate memory holes in e820 RAM entries.
+		e820_entry = &bp->e820_table[i];
+		needed_end = init_end;
+		if (i < nr_entries - 1) {
+			needed_end = bp->e820_table[i + 1].addr;
+			BUG_ON(needed_end <
+			       e820_entry->addr + e820_entry->size);
+		}
+		extend_e820_on_demand(e820_entry, needed_end);
+	}
 }
