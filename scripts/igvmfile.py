@@ -1647,8 +1647,8 @@ class IGVMFile(VMState):
 0: memory required used before long mode
 
 HV should launch_update some empty pages since
-    * startup_32 uses boot_stack(unrelocated) and pgtable(relocated)
-    * pvalidate must run after jumping to long mode (startup_64)
+1. startup_32 uses boot_stack(unrelocated) and pgtable(relocated)
+2. pvalidate must run after jumping to long mode (startup_64)
 See more details in arch/x86/boot/compressed/head_64.S
   |<-----------vmlinux.bin-------->|
 A:|*********|*******|**************|------|0000|-------|--------------|
