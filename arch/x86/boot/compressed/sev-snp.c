@@ -190,9 +190,10 @@ __visible void pvalidate_for_startup_64(struct boot_params *boot_params)
 		e820_entry = &boot_params->e820_table[i];
 		if (i < nr_entries - 1) {
 			needed_end = boot_params->e820_table[i + 1].addr;
-			BUG_ON(needed_end <
-			       e820_entry->addr + e820_entry->size);
-		}else{
+			if (needed_end < e820_entry->addr) {
+				error("e820 table is not sorted.");
+			}
+		} else {
 			needed_end = init_end;
 		}
 		extend_e820_on_demand(e820_entry, needed_end);
