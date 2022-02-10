@@ -148,7 +148,8 @@ static void extend_e820_on_demand(struct boot_e820_entry *e820_entry,
 	if (!e820_entry) {
 		return;
 	}
-	end = e820_entry->addr + e820_entry->size;
+	// Validated memory must be aligned by PAGE_SIZE
+	end = ALIGN(e820_entry->addr + e820_entry->size, PAGE_SIZE);
 	if (needed_ram_end > end && e820_entry->type == E820_TYPE_RAM) {
 		for (paddr = end; paddr < needed_ram_end; paddr += PAGE_SIZE) {
 			sev_snp_issue_pvalidate_page(paddr, true);
