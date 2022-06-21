@@ -410,14 +410,18 @@ void hv_sev_debugbreak(u32 val)
 
 __printf(1, 0) int vprintk_func(const char *fmt, va_list args)
 {
+	va_list ap;
 #ifdef CONFIG_KGDB_KDB
 	/* Allow to pass printk() to kdb but avoid a recursion. */
 	if (unlikely(kdb_trap_printk && kdb_printf_cpu < 0))
 		return vkdb_printf(KDB_MSGSRC_PRINTK, fmt, args);
 #endif
 
-	if (sev_snp_active())
-		return hv_sev_printf(fmt, args);
+	if (sev_snp_active()){
+		va_copy(ap, args);
+		hv_sev_printf(fmt, ap);
+		va_end(ap);
+	}
 
 	/*
 	 * Try to use the main logbuf even in NMI. But avoid calling console
